@@ -21,6 +21,7 @@ Build automation pipeline for desktop platforms in Unity with versioned GitHub r
 
 ## Getting Started
 
+- Install the latest Unity package found in the releases section by dragging it into Unity's Assets folder.
 - Select Build > Build Pipeline from the Unity Toolbar to open the build pipeline window.
 - Optionally select build profiles for each platform, otherwise will use the project setting's build profile.
 - Select the platforms you wish to build for.
