@@ -25,7 +25,6 @@ public class UpdateChecker : MonoBehaviour
     [SerializeField] private string githubToken = "";
 
     private bool isConfigured = false;
-    private bool autoUpdateEnabled = true;
     private string githubOwner;
     private string githubRepo;
 
@@ -79,26 +78,14 @@ public class UpdateChecker : MonoBehaviour
     }
 
     /// <summary>
-    /// Configures the update checker with settings from the config file.
+    /// Configures the update checker with settings a url source.
     /// </summary>
-    /// <param name="config">The configuration file containing update settings.</param>
-    public void OnConfigLoaded(ConfigFile config)
+    public void ConfigureUpdateSource(string url, string token = "")
     {
-        githubRepoUrl = config.githubRepoUrl;
-        githubToken = config.githubToken;
-        autoUpdateEnabled = config.autoUpdateEnabled;
+        githubRepoUrl = url;
+        githubToken = token;;
         ParseGitHubUrl();
         isConfigured = true;
-
-        if (autoUpdateEnabled)
-        {
-            if (string.IsNullOrEmpty(githubRepoUrl))
-            {
-                UnityEngine.Debug.LogWarning("Auto-update is enabled but repository URL is not configured. Please use the ConfigureAutoUpdates command to set up the update source.");
-                return;
-            }
-            CheckForUpdates();
-        }
     }
 
     /// <summary>
@@ -149,7 +136,7 @@ public class UpdateChecker : MonoBehaviour
     {
         if (string.IsNullOrEmpty(githubRepoUrl))
         {
-            UnityEngine.Debug.LogError("UpdateChecker: GitHub repository URL is not configured. Please set it in the Inspector or config file.");
+            UnityEngine.Debug.LogError("UpdateChecker: GitHub repository URL is not configured. Please set it in the Inspector or call ConfigureUpdateSource()");
             return;
         }
 
@@ -232,7 +219,7 @@ public class UpdateChecker : MonoBehaviour
     {
         if (!isConfigured || !IsConfigurationValid())
         {
-            UnityEngine.Debug.LogError("UpdateChecker: Cannot check for updates - configuration is invalid or not loaded.");
+            UnityEngine.Debug.LogError("UpdateChecker: Cannot check for updates - configuration is invalid or not set.");
             return;
         }
 
@@ -749,11 +736,5 @@ public class UpdateChecker : MonoBehaviour
     /// </summary>
     /// <returns>The GitHub access token.</returns>
     public string GetGitHubToken() => githubToken;
-
-    /// <summary>
-    /// Gets whether automatic updates are enabled.
-    /// </summary>
-    /// <returns>True if auto-updates are enabled, false otherwise.</returns>
-    public bool IsAutoUpdateEnabled() => autoUpdateEnabled;
 }
 #endif 
