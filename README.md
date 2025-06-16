@@ -16,7 +16,7 @@ Build automation pipeline for desktop platforms in Unity with versioned GitHub r
 
 - Unity 6.0 or later supporting build profiles.
 - Publishing to a private reposititory requires GitHub Personal Access Token (PAT) with `repo` and `workflow` permissions
-- ![Inno-Setup](https://jrsoftware.org/isinfo.php) installed to create windows installation files. Default path: C:\Program Files (x86)\Inno Setup 6\ISCC.exe 
+- [Inno-Setup](https://jrsoftware.org/isinfo.php) installed to create windows installation files. Default path: C:\Program Files (x86)\Inno Setup 6\ISCC.exe 
 - Windows, MacOS, Linux build support installed as needed for your Unity version.
 
 ## Getting Started
