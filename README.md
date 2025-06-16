@@ -37,7 +37,9 @@ Build automation pipeline for desktop platforms in Unity with versioned GitHub r
 ## Runtime Updates:
 
 - Once a release is on GitHub use updatechecker.cs API to check for updates and auto-download/install.
+- Minimum scripting call ConfigureUpdateSource(string url, string token = "") with your repo info. Then call CheckForUpdates(); If an update is found call UpdateApplication().
 - Be sure to protect your PAT within Unity if publishing to a private repository.
+- Note this will cause your application to restart. (only tested on windows).
 
 ## Screenshot
 
