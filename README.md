@@ -34,6 +34,11 @@ Build automation pipeline for desktop platforms in Unity with versioned GitHub r
 - Outputs Releases to a 'Releases' folder at the project root. Releases will be in .zip files with the build folder names inside a folder named after the version.
 - GitHub releases will have a new tag created with the current application version. Only Released files will be uploaded, including .iss files and windows installer called {ProductName-Installer}.exe
 
+## Runtime Updates:
+
+- Once a release is on GitHub use updatechecker.cs API to check for updates and auto-download/install.
+- Be sure to protect your PAT within Unity if publishing to a private repository.
+
 ## Screenshot
 
 Below is a preview of the Unity build pipeline in action:
