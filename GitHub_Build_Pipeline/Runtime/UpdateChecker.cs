@@ -24,6 +24,7 @@ public class UpdateChecker : MonoBehaviour
     [Tooltip("Optional GitHub access token for private repositories")]
     [SerializeField] private string githubToken = "";
 
+    public bool updateAvailable { get; private set; } = false;
     private bool isConfigured = false;
     private string githubOwner;
     private string githubRepo;
@@ -321,6 +322,7 @@ public class UpdateChecker : MonoBehaviour
                                     UnityEngine.Debug.Log("<color=yellow>Updates cannot be installed from the Unity Editor. This will work in standalone builds.</color>");
                                 #else
                                     UnityEngine.Debug.Log("<color=yellow>Run the 'UpdateApplication' command to update.</color>");
+                                    updateAvailable = true;
                                 #endif
                             }
                             else
