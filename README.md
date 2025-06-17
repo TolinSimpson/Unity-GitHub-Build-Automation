@@ -15,7 +15,7 @@ Build automation pipeline for desktop platforms in Unity with versioned GitHub r
 ### Requirements
 
 - Unity 6.0 or later supporting build profiles.
-- Publishing to a private reposititory requires GitHub Personal Access Token (PAT) with `repo` and `workflow` permissions
+- Publishing to a private reposititory requires GitHub Personal Access Token (PAT) with `repo` permissions
 - [Inno-Setup](https://jrsoftware.org/isinfo.php) installed to create windows installation files.
 - Windows, MacOS, Linux build support installed as needed for your Unity version.
 
