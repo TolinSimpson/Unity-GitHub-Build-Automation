@@ -1143,7 +1143,7 @@ public class BuildPipelineWindow : EditorWindow
 
         string executablePath = Path.Combine(buildPath, executableName);
 
-        // Build using profile if available
+                // Build using profile if available
         if (profile != null)
         {
             UnityEngine.Debug.Log($"Using build profile for {platform}: {profile.name}");
@@ -1172,7 +1172,13 @@ public class BuildPipelineWindow : EditorWindow
             });
         }
 
-        UnityEngine.Debug.Log($"Build completed for {platform} in {buildPath}");
+        // Set executable permissions for macOS builds
+        if (platform == "MacOS" && Directory.Exists(executablePath))
+        {
+            SetMacOSExecutablePermissions(executablePath);
+        }
+
+    UnityEngine.Debug.Log($"Build completed for {platform} in {buildPath}");
     }
 
     private void UpdateBuildProfileVersion(BuildProfile profile)
@@ -1697,6 +1703,46 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
         {
             // Re-enable compilation
             EditorApplication.UnlockReloadAssemblies();
+        }
+    }
+
+    private void SetMacOSExecutablePermissions(string appPath)
+    {
+        try
+        {
+            // Set executable permissions for the entire app bundle
+            // This ensures the app can be opened by end users
+            string chmodArgs = $"-R +x \"{appPath}\"";
+            
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "chmod",
+                Arguments = chmodArgs,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using (var process = new Process { StartInfo = processStartInfo })
+            {
+                process.Start();
+                process.WaitForExit();
+
+                if (process.ExitCode == 0)
+                {
+                    UnityEngine.Debug.Log($"Successfully set executable permissions for macOS app: {appPath}");
+                }
+                else
+                {
+                    string error = process.StandardError.ReadToEnd();
+                    UnityEngine.Debug.LogWarning($"Failed to set executable permissions for macOS app: {error}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            UnityEngine.Debug.LogWarning($"Exception while setting macOS executable permissions: {ex.Message}");
         }
     }
 
