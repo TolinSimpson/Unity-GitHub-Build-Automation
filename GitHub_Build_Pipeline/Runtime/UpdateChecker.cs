@@ -320,10 +320,10 @@ public class UpdateChecker : MonoBehaviour
                                 UnityEngine.Debug.Log($"<color=yellow>Download URL: {targetAsset.url}</color>");
                                 #if UNITY_EDITOR
                                     UnityEngine.Debug.Log("<color=yellow>Updates cannot be installed from the Unity Editor. This will work in standalone builds.</color>");
-                                #else
+#else
                                     UnityEngine.Debug.Log("<color=yellow>Run the 'UpdateApplication' command to update.</color>");
-                                    updateAvailable = true;
-                                #endif
+                                                                    updateAvailable = true;
+#endif
                             }
                             else
                             {

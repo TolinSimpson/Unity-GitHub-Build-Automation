@@ -68,11 +68,13 @@ public class BuildPipelineWindow : EditorWindow
     private string releaseDescription = "";
     private bool includePrerelease = false;
     
+    // DMG Settings
+    private bool enableDMGCreation = false;
+    
     // UI State
     private Vector2 scrollPosition;
     private bool isProcessing = false;
     private bool isCancellationRequested = false;
-    private bool isBuildInProgress = false;
     private string currentBuildPlatform = "";
     private string statusMessage = "";
     private bool showPasswords = false;
@@ -147,6 +149,9 @@ public class BuildPipelineWindow : EditorWindow
         repositoryUrl = EditorPrefs.GetString("BuildPipeline_RepositoryUrl", "");
         githubToken = EditorPrefs.GetString("BuildPipeline_GithubToken", "");
         includePrerelease = EditorPrefs.GetBool("BuildPipeline_IncludePrerelease", false);
+        
+        // DMG Settings
+        enableDMGCreation = EditorPrefs.GetBool("BuildPipeline_EnableDMGCreation", false);
         
         // UI State
         macSigningFoldout = EditorPrefs.GetBool("BuildPipeline_MacSigningFoldout", false);
@@ -252,6 +257,9 @@ public class BuildPipelineWindow : EditorWindow
         EditorPrefs.SetString("BuildPipeline_RepositoryUrl", repositoryUrl);
         EditorPrefs.SetString("BuildPipeline_GithubToken", githubToken);
         EditorPrefs.SetBool("BuildPipeline_IncludePrerelease", includePrerelease);
+        
+        // DMG Settings
+        EditorPrefs.SetBool("BuildPipeline_EnableDMGCreation", enableDMGCreation);
         
         // UI State
         EditorPrefs.SetBool("BuildPipeline_MacSigningFoldout", macSigningFoldout);
@@ -616,6 +624,17 @@ public class BuildPipelineWindow : EditorWindow
         releaseDescription = EditorGUILayout.TextArea(releaseDescription, GUILayout.Height(60));
         includePrerelease = EditorGUILayout.Toggle(new GUIContent("Mark as Prerelease", "Mark this release as a prerelease/beta version on GitHub"), includePrerelease);
         
+        EditorGUILayout.Space(5);
+        EditorGUILayout.LabelField("DMG Creation", EditorStyles.boldLabel);
+        enableDMGCreation = EditorGUILayout.Toggle(new GUIContent("Create DMG via GitHub Actions", "Trigger GitHub Actions workflow to create macOS DMG files from ZIP builds and attach them to the release"), enableDMGCreation);
+        
+        if (enableDMGCreation)
+        {
+            EditorGUI.indentLevel++;
+            EditorGUILayout.HelpBox("DMG creation uses GitHub Actions. The DMG will be automatically attached to the GitHub release.", MessageType.Info);
+            EditorGUI.indentLevel--;
+        }
+        
         if (string.IsNullOrEmpty(releaseTitle))
         {
             string nextVersion = GetNextVersion();
@@ -689,6 +708,15 @@ public class BuildPipelineWindow : EditorWindow
         if (GUILayout.Button(new GUIContent("Create Release", "Package builds into ZIP files for distribution")))
         {
             CreateReleaseFiles();
+        }
+        GUI.enabled = true;
+        EditorGUILayout.EndHorizontal();
+        
+        EditorGUILayout.BeginHorizontal();
+        GUI.enabled = !isProcessing && !string.IsNullOrEmpty(repositoryUrl) && !string.IsNullOrEmpty(githubToken);
+        if (GUILayout.Button(new GUIContent("Create DMG", "Trigger GitHub Actions to create DMG from existing macOS ZIP")))
+        {
+            TriggerManualDMGCreation();
         }
         GUI.enabled = true;
         EditorGUILayout.EndHorizontal();
@@ -1043,7 +1071,6 @@ public class BuildPipelineWindow : EditorWindow
         var tcs = new TaskCompletionSource<bool>();
         
         currentBuildPlatform = platform;
-        isBuildInProgress = true;
         
         // Schedule build execution for the next editor update
         EditorApplication.CallbackFunction buildAction = null;
@@ -1060,12 +1087,10 @@ public class BuildPipelineWindow : EditorWindow
                 }
                 
                 BuildForPlatform(platform);
-                isBuildInProgress = false;
                 tcs.SetResult(true);
             }
             catch (Exception ex)
             {
-                isBuildInProgress = false;
                 tcs.SetException(ex);
             }
         };
@@ -1385,10 +1410,11 @@ public class BuildPipelineWindow : EditorWindow
             string buildPath = Path.Combine(BUILD_PATH, buildFolderName);
             if (!Directory.Exists(buildPath)) continue;
 
+            // Create ZIP files for all platforms (DMG creation now handled by GitHub Actions)
             string zipPath = Path.Combine(releasePath, $"{buildFolderName}.zip");
             if (FileUtility.CreateZipFile(buildPath, zipPath))
             {
-                UnityEngine.Debug.Log($"Created release zip for {platform}");
+                UnityEngine.Debug.Log($"Created release ZIP for {platform}");
             }
         }
         
@@ -1678,6 +1704,7 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
 
             var releaseFiles = new List<string>();
             releaseFiles.AddRange(Directory.GetFiles(releasePath, "*.zip"));
+            releaseFiles.AddRange(Directory.GetFiles(releasePath, "*.dmg"));
             releaseFiles.AddRange(Directory.GetFiles(releasePath, "*.exe"));
             releaseFiles.AddRange(Directory.GetFiles(releasePath, "*.iss"));
 
@@ -1694,6 +1721,12 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
             }
 
             statusMessage = "GitHub release created successfully!";
+            
+            // Trigger DMG creation if enabled and macOS build exists
+            if (enableDMGCreation && buildMacOS)
+            {
+                await TriggerDMGCreation(api, releaseData, version, releasePath);
+            }
         }
         catch (Exception ex)
         {
@@ -1773,6 +1806,115 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
             }
 
             return output;
+                }
+    }
+
+    private async Task TriggerDMGCreation(GitHubAPI api, ReleaseResponse releaseData, string version, string releasePath)
+    {
+        try
+        {
+            statusMessage = "Triggering DMG creation workflow...";
+            
+            // Find macOS ZIP file
+            string macOSZipPath = Path.Combine(releasePath, $"{Application.productName}-MacOS.zip");
+            if (!File.Exists(macOSZipPath))
+            {
+                UnityEngine.Debug.LogWarning("macOS ZIP file not found, cannot create DMG");
+                return;
+            }
+            
+            // Get the download URL for the ZIP file from the release
+            string downloadUrl = $"{repositoryUrl}/releases/download/v{version}/{Application.productName}-MacOS.zip";
+            
+            // Extract release ID from upload URL
+            string releaseId = releaseData.upload_url.Split('/')[^3];
+            
+            // Trigger the DMG creation workflow
+            bool success = await api.TriggerWorkflow("create-dmg.yml", "main", downloadUrl, Application.productName, version, releaseId);
+            
+            if (success)
+            {
+                statusMessage = "DMG creation workflow triggered successfully! The DMG will be attached to the release automatically.";
+                UnityEngine.Debug.Log("DMG creation workflow started. Check GitHub Actions for progress, and the DMG will be attached to the release when complete.");
+            }
+            else
+            {
+                statusMessage = "Failed to trigger DMG creation workflow.";
+            }
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"DMG creation workflow failed: {ex.Message}";
+            UnityEngine.Debug.LogError($"DMG workflow error: {ex}");
+        }
+    }
+
+    private async void TriggerManualDMGCreation()
+    {
+        if (string.IsNullOrEmpty(repositoryUrl) || string.IsNullOrEmpty(githubToken))
+        {
+            statusMessage = "GitHub repository URL and token are required for DMG creation.";
+            return;
+        }
+
+        isProcessing = true;
+        
+        try
+        {
+            statusMessage = "Triggering manual DMG creation...";
+
+            // Extract owner and repo from repository URL
+            string[] urlParts = repositoryUrl.Split(new[] { "github.com/" }, StringSplitOptions.RemoveEmptyEntries);
+            if (urlParts.Length != 2)
+            {
+                throw new Exception("Invalid repository URL format. Expected: https://github.com/owner/repo");
+            }
+
+            string[] ownerRepo = urlParts[1].Split('/');
+            if (ownerRepo.Length != 2)
+            {
+                throw new Exception("Invalid repository URL format. Expected: https://github.com/owner/repo");
+            }
+
+            string owner = ownerRepo[0];
+            string repo = ownerRepo[1].Replace(".git", "");
+
+            var api = new GitHubAPI(githubToken, owner, repo);
+
+            // Use current version or check for existing release
+            string version = PlayerSettings.bundleVersion;
+            var release = await api.GetReleaseByTag($"v{version}");
+            
+            if (release == null)
+            {
+                statusMessage = "No release found for current version. Please create a release first.";
+                return;
+            }
+
+            string releaseId = release.id.ToString();
+            string downloadUrl = $"{repositoryUrl}/releases/download/v{version}/{Application.productName}-MacOS.zip";
+
+            // Trigger the DMG creation workflow
+            bool success = await api.TriggerWorkflow("create-dmg.yml", "main", downloadUrl, Application.productName, version, releaseId);
+
+            if (success)
+            {
+                statusMessage = "DMG creation workflow triggered successfully! The DMG will be attached to the release automatically.";
+                UnityEngine.Debug.Log("DMG creation workflow started. Check GitHub Actions for progress, and the DMG will be attached to the release when complete.");
+            }
+            else
+            {
+                statusMessage = "Failed to trigger DMG creation workflow.";
+            }
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"DMG creation failed: {ex.Message}";
+            UnityEngine.Debug.LogError($"DMG creation error: {ex}");
+        }
+        finally
+        {
+            isProcessing = false;
         }
     }
 

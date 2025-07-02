@@ -530,6 +530,207 @@ public class FileUtility
         return await Task.Run(() => CreateZipFile(sourcePath, zipPath));
     }
 
+    /// <summary>
+    /// Creates a DMG file from a macOS .app bundle (macOS only).
+    /// </summary>
+    /// <param name="appPath">Path to the .app bundle</param>
+    /// <param name="dmgPath">Path where the DMG file will be created</param>
+    /// <param name="volumeName">Volume name for the DMG (optional, defaults to app name)</param>
+    /// <returns>True if successful, false otherwise</returns>
+    public static bool CreateDMGFile(string appPath, string dmgPath, string volumeName = null)
+    {
+#if UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
+        try
+        {
+            if (!Directory.Exists(appPath))
+            {
+                UnityEngine.Debug.LogError($"App bundle does not exist: {appPath}");
+                return false;
+            }
+
+            // Ensure the target directory exists
+            string targetDir = Path.GetDirectoryName(dmgPath);
+            if (!string.IsNullOrEmpty(targetDir) && !Directory.Exists(targetDir))
+            {
+                Directory.CreateDirectory(targetDir);
+            }
+
+            // Delete existing DMG if it exists
+            if (File.Exists(dmgPath))
+            {
+                File.Delete(dmgPath);
+            }
+
+            // Extract app name if volume name not provided
+            if (string.IsNullOrEmpty(volumeName))
+            {
+                volumeName = Path.GetFileNameWithoutExtension(appPath);
+            }
+
+            // Try using create-dmg first (requires homebrew installation)
+            if (TryCreateDMGWithCreateDMG(appPath, dmgPath, volumeName))
+            {
+                return true;
+            }
+
+            // Fallback to hdiutil (native macOS tool)
+            return CreateDMGWithHdiutil(appPath, dmgPath, volumeName);
+        }
+        catch (System.Exception e)
+        {
+            UnityEngine.Debug.LogError($"Failed to create DMG file: {e.Message}");
+            return false;
+        }
+#else
+        UnityEngine.Debug.LogWarning("DMG creation is only supported on macOS");
+        return false;
+#endif
+    }
+
+#if UNITY_EDITOR_OSX || UNITY_STANDALONE_OSX
+    private static bool TryCreateDMGWithCreateDMG(string appPath, string dmgPath, string volumeName)
+    {
+        try
+        {
+            string appName = Path.GetFileName(appPath);
+            string appDir = Path.GetDirectoryName(appPath);
+            
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "create-dmg",
+                Arguments = $"--volname \"{volumeName}\" " +
+                           $"--window-pos 200 120 " +
+                           $"--window-size 800 400 " +
+                           $"--icon-size 100 " +
+                           $"--icon \"{appName}\" 200 190 " +
+                           $"--hide-extension \"{appName}\" " +
+                           $"--app-drop-link 600 185 " +
+                           $"--hdiutil-quiet " +
+                           $"\"{dmgPath}\" " +
+                           $"\"{appDir}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using (var process = new Process { StartInfo = processStartInfo })
+            {
+                process.Start();
+                string output = process.StandardOutput.ReadToEnd();
+                string error = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+
+                if (process.ExitCode == 0 && File.Exists(dmgPath))
+                {
+                    UnityEngine.Debug.Log($"Created DMG with create-dmg: {dmgPath}");
+                    return true;
+                }
+                else
+                {
+                    UnityEngine.Debug.LogWarning($"create-dmg failed: {error}");
+                    return false;
+                }
+            }
+        }
+        catch (System.Exception e)
+        {
+            UnityEngine.Debug.LogWarning($"create-dmg not available: {e.Message}");
+            return false;
+        }
+    }
+
+    private static bool CreateDMGWithHdiutil(string appPath, string dmgPath, string volumeName)
+    {
+        try
+        {
+            string tempDmgPath = dmgPath + ".temp.dmg";
+            string appDir = Path.GetDirectoryName(appPath);
+            
+            // Create a temporary DMG
+            var createProcessInfo = new ProcessStartInfo
+            {
+                FileName = "hdiutil",
+                Arguments = $"create -volname \"{volumeName}\" -srcfolder \"{appDir}\" -ov -format UDZO \"{tempDmgPath}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using (var process = new Process { StartInfo = createProcessInfo })
+            {
+                process.Start();
+                string output = process.StandardOutput.ReadToEnd();
+                string error = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+
+                if (process.ExitCode != 0)
+                {
+                    throw new System.Exception($"hdiutil create failed: {error}");
+                }
+            }
+
+            // Convert to final DMG format
+            var convertProcessInfo = new ProcessStartInfo
+            {
+                FileName = "hdiutil",
+                Arguments = $"convert \"{tempDmgPath}\" -format UDZO -o \"{dmgPath}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using (var process = new Process { StartInfo = convertProcessInfo })
+            {
+                process.Start();
+                string output = process.StandardOutput.ReadToEnd();
+                string error = process.StandardError.ReadToEnd();
+                process.WaitForExit();
+
+                if (process.ExitCode != 0)
+                {
+                    throw new System.Exception($"hdiutil convert failed: {error}");
+                }
+            }
+
+            // Clean up temporary file
+            if (File.Exists(tempDmgPath))
+            {
+                File.Delete(tempDmgPath);
+            }
+
+            if (File.Exists(dmgPath))
+            {
+                UnityEngine.Debug.Log($"Created DMG with hdiutil: {dmgPath}");
+                return true;
+            }
+            else
+            {
+                throw new System.Exception("DMG file was not created");
+            }
+        }
+        catch (System.Exception e)
+        {
+            UnityEngine.Debug.LogError($"Failed to create DMG with hdiutil: {e.Message}");
+            return false;
+        }
+    }
+#endif
+
+    /// <summary>
+    /// Creates a DMG file from a macOS .app bundle asynchronously.
+    /// </summary>
+    /// <param name="appPath">Path to the .app bundle</param>
+    /// <param name="dmgPath">Path where the DMG file will be created</param>
+    /// <param name="volumeName">Volume name for the DMG (optional, defaults to app name)</param>
+    /// <returns>Task<bool> indicating success or failure</returns>
+    public static async Task<bool> CreateDMGFileAsync(string appPath, string dmgPath, string volumeName = null)
+    {
+        return await Task.Run(() => CreateDMGFile(appPath, dmgPath, volumeName));
+    }
+
     private static string GetAppDataTempPath()
     {
         string appDataPath = Path.Combine(
