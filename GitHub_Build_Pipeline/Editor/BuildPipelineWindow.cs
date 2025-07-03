@@ -625,15 +625,25 @@ public class BuildPipelineWindow : EditorWindow
         includePrerelease = EditorGUILayout.Toggle(new GUIContent("Mark as Prerelease", "Mark this release as a prerelease/beta version on GitHub"), includePrerelease);
         
         EditorGUILayout.Space(5);
+
         EditorGUILayout.LabelField("DMG Creation", EditorStyles.boldLabel);
-        enableDMGCreation = EditorGUILayout.Toggle(new GUIContent("Create DMG via GitHub Actions", "Trigger GitHub Actions workflow to create macOS DMG files from ZIP builds and attach them to the release"), enableDMGCreation);
+        enableDMGCreation = EditorGUILayout.Toggle(new GUIContent("Create DMG on release", "Trigger GitHub Actions workflow to create macOS DMG files from ZIP builds and attach them to the release"), enableDMGCreation);
         
         if (enableDMGCreation)
         {
             EditorGUI.indentLevel++;
-            EditorGUILayout.HelpBox("DMG creation uses GitHub Actions. The DMG will be automatically attached to the GitHub release.", MessageType.Info);
+            EditorGUILayout.HelpBox("DMG creation uses GitHub Actions. The DMG will be automatically attached to the GitHub release. (Requries a MacOS release)", MessageType.Info);
             EditorGUI.indentLevel--;
         }
+
+        EditorGUILayout.BeginHorizontal();
+        GUI.enabled = !isProcessing && !string.IsNullOrEmpty(repositoryUrl) && !string.IsNullOrEmpty(githubToken);
+        if (GUILayout.Button(new GUIContent("Manually Create DMG", "Trigger GitHub Actions to create MacOS DMG from the latest release.")))
+        {
+            TriggerManualDMGCreation();
+        }
+        GUI.enabled = true;
+        EditorGUILayout.EndHorizontal();
         
         if (string.IsNullOrEmpty(releaseTitle))
         {
@@ -708,15 +718,6 @@ public class BuildPipelineWindow : EditorWindow
         if (GUILayout.Button(new GUIContent("Create Release", "Package builds into ZIP files for distribution")))
         {
             CreateReleaseFiles();
-        }
-        GUI.enabled = true;
-        EditorGUILayout.EndHorizontal();
-        
-        EditorGUILayout.BeginHorizontal();
-        GUI.enabled = !isProcessing && !string.IsNullOrEmpty(repositoryUrl) && !string.IsNullOrEmpty(githubToken);
-        if (GUILayout.Button(new GUIContent("Create DMG", "Trigger GitHub Actions to create DMG from existing macOS ZIP")))
-        {
-            TriggerManualDMGCreation();
         }
         GUI.enabled = true;
         EditorGUILayout.EndHorizontal();

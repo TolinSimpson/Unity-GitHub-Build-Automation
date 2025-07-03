@@ -84,7 +84,7 @@ public class UpdateChecker : MonoBehaviour
     public void ConfigureUpdateSource(string url, string token = "")
     {
         githubRepoUrl = url;
-        githubToken = token;;
+        githubToken = token;
         ParseGitHubUrl();
         isConfigured = true;
     }
@@ -160,20 +160,59 @@ public class UpdateChecker : MonoBehaviour
     }
 
     /// <summary>
-    /// Gets the platform-specific asset name for the update package.
+    /// Gets the possible platform-specific asset names for the update package.
+    /// For Mac, returns both .dmg and .zip options in priority order.
     /// </summary>
-    /// <returns>The expected asset name for the current platform.</returns>
-    private string GetPlatformAssetName()
+    /// <returns>Array of possible asset names for the current platform in priority order.</returns>
+    private string[] GetPlatformAssetNames()
     {
         string platform = "";
         #if UNITY_STANDALONE_WIN
             platform = "Windows";
+            return new string[] { $"{Application.productName}-{platform}.zip" };
         #elif UNITY_STANDALONE_LINUX
             platform = "Linux";
+            return new string[] { $"{Application.productName}-{platform}.zip" };
         #elif UNITY_STANDALONE_OSX
             platform = "Mac";
+            // Try .dmg first, fallback to .zip
+            return new string[] { 
+                $"{Application.productName}-{platform}.dmg",
+                $"{Application.productName}-{platform}.zip"
+            };
+        #else
+            return new string[] { $"{Application.productName}.zip" };
         #endif
-        return $"{Application.productName}-{platform}.zip";
+    }
+
+    /// <summary>
+    /// Finds the appropriate platform asset from the release assets.
+    /// For Mac, tries .dmg first, then falls back to .zip.
+    /// </summary>
+    /// <param name="assets">The array of release assets to search through.</param>
+    /// <param name="foundAssetType">Output parameter indicating the type of asset found ("dmg" or "zip").</param>
+    /// <returns>The matching asset, or null if none found.</returns>
+    private GitHubAsset FindPlatformAsset(GitHubAsset[] assets, out string foundAssetType)
+    {
+        foundAssetType = null;
+        if (assets == null) return null;
+        
+        string[] possibleNames = GetPlatformAssetNames();
+        
+        foreach (string assetName in possibleNames)
+        {
+            foreach (var asset in assets)
+            {
+                if (asset.name == assetName)
+                {
+                    foundAssetType = assetName.EndsWith(".dmg") ? "dmg" : "zip";
+                    UnityEngine.Debug.Log($"Found platform asset: {asset.name} (type: {foundAssetType})");
+                    return asset;
+                }
+            }
+        }
+        
+        return null;
     }
 
     /// <summary>
@@ -298,26 +337,15 @@ public class UpdateChecker : MonoBehaviour
 
                         if (latestRelease != null && IsNewerVersion(latestVersion, currentVersion))
                         {
-                            string assetName = GetPlatformAssetName();
-                            GitHubAsset targetAsset = null;
-                            
-                            if (latestRelease.assets != null)
-                            {
-                                foreach (var asset in latestRelease.assets)
-                                {
-                                    if (asset.name == assetName)
-                                    {
-                                        targetAsset = asset;
-                                        break;
-                                    }
-                                }
-                            }
+                            string foundAssetType;
+                            GitHubAsset targetAsset = FindPlatformAsset(latestRelease.assets, out foundAssetType);
 
                             if (targetAsset != null)
                             {
                                 UnityEngine.Debug.Log($"<color=yellow>New version {latestVersion} available! Current version: {currentVersion}</color>");
                                 UnityEngine.Debug.Log($"<color=yellow>Release notes: {latestRelease.body}</color>");
                                 UnityEngine.Debug.Log($"<color=yellow>Download URL: {targetAsset.url}</color>");
+                                UnityEngine.Debug.Log($"<color=yellow>Asset type: {foundAssetType}</color>");
                                 #if UNITY_EDITOR
                                     UnityEngine.Debug.Log("<color=yellow>Updates cannot be installed from the Unity Editor. This will work in standalone builds.</color>");
 #else
@@ -327,7 +355,9 @@ public class UpdateChecker : MonoBehaviour
                             }
                             else
                             {
-                                UnityEngine.Debug.LogError($"No matching asset found for platform. Expected asset name: {assetName}");
+                                string[] possibleNames = GetPlatformAssetNames();
+                                string expectedNames = string.Join(", ", possibleNames);
+                                UnityEngine.Debug.LogError($"No matching asset found for platform. Expected asset names: {expectedNames}");
                             }
                         }
                         else
@@ -410,6 +440,309 @@ public class UpdateChecker : MonoBehaviour
         UnityEngine.Debug.LogError($"Response body: {responseBody}");
     }
 
+    #if UNITY_STANDALONE_OSX
+    /// <summary>
+    /// Installs a .dmg update on macOS by mounting the disk image and handling the installation.
+    /// </summary>
+    /// <param name="dmgPath">Path to the downloaded .dmg file.</param>
+    /// <param name="tempDir">Temporary directory for extraction.</param>
+    /// <returns>True if installation was successful or initiated.</returns>
+    private async Task<bool> InstallDmgUpdate(string dmgPath, string tempDir)
+    {
+        try
+        {
+            UnityEngine.Debug.Log("Mounting .dmg file...");
+            
+            // Mount the .dmg file using hdiutil
+            ProcessStartInfo mountInfo = new ProcessStartInfo
+            {
+                FileName = "hdiutil",
+                Arguments = $"attach \"{dmgPath}\" -nobrowse -quiet",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using (Process mountProcess = Process.Start(mountInfo))
+            {
+                await Task.Run(() => mountProcess.WaitForExit());
+                
+                if (mountProcess.ExitCode != 0)
+                {
+                    string error = await mountProcess.StandardError.ReadToEndAsync();
+                    UnityEngine.Debug.LogError($"Failed to mount .dmg: {error}");
+                    return false;
+                }
+
+                string mountOutput = await mountProcess.StandardOutput.ReadToEndAsync();
+                UnityEngine.Debug.Log($"Mount output: {mountOutput}");
+                
+                // Parse mount output to find the mount point
+                string mountPoint = ExtractMountPoint(mountOutput);
+                if (string.IsNullOrEmpty(mountPoint))
+                {
+                    UnityEngine.Debug.LogError("Could not determine mount point from hdiutil output");
+                    return false;
+                }
+
+                UnityEngine.Debug.Log($"Mounted at: {mountPoint}");
+                
+                // Find .app bundle in mounted volume
+                string appPath = FindAppBundle(mountPoint);
+                if (string.IsNullOrEmpty(appPath))
+                {
+                    UnityEngine.Debug.LogError("No .app bundle found in mounted .dmg");
+                    // Still try to open the mounted volume for user interaction
+                    OpenMountedVolume(mountPoint);
+                    return true; // Consider this successful as user can manually install
+                }
+
+                UnityEngine.Debug.Log($"Found app bundle: {appPath}");
+                
+                // Attempt automatic installation to Applications folder
+                bool autoInstallSuccess = await AttemptAutomaticInstall(appPath);
+                
+                if (!autoInstallSuccess)
+                {
+                    // Fall back to opening the mounted volume for user interaction
+                    UnityEngine.Debug.Log("Automatic installation failed, opening mounted volume for user interaction...");
+                    OpenMountedVolume(mountPoint);
+                }
+                
+                // Schedule cleanup (unmount) after a delay to allow user interaction
+                _ = Task.Run(async () => {
+                    await Task.Delay(30000); // Wait 30 seconds
+                    UnmountDmg(mountPoint);
+                });
+                
+                return true;
+            }
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogError($"Error processing .dmg file: {e.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Extracts the mount point from hdiutil output.
+    /// </summary>
+    private string ExtractMountPoint(string hdiutilOutput)
+    {
+        try
+        {
+            string[] lines = hdiutilOutput.Split('\n');
+            foreach (string line in lines)
+            {
+                if (line.Contains("/Volumes/"))
+                {
+                    // Find the mount point (typically the last part of the line)
+                    string[] parts = line.Split('\t');
+                    for (int i = parts.Length - 1; i >= 0; i--)
+                    {
+                        if (parts[i].StartsWith("/Volumes/"))
+                        {
+                            return parts[i].Trim();
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogError($"Error parsing mount point: {e.Message}");
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Finds the .app bundle in the mounted volume.
+    /// </summary>
+    private string FindAppBundle(string mountPoint)
+    {
+        try
+        {
+            if (!Directory.Exists(mountPoint))
+                return null;
+
+            string[] appBundles = Directory.GetDirectories(mountPoint, "*.app");
+            return appBundles.Length > 0 ? appBundles[0] : null;
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogError($"Error finding app bundle: {e.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Attempts to automatically install the app to the Applications folder.
+    /// </summary>
+    private async Task<bool> AttemptAutomaticInstall(string appPath)
+    {
+        try
+        {
+            string appName = Path.GetFileName(appPath);
+            string applicationsPath = "/Applications";
+            string destinationPath = Path.Combine(applicationsPath, appName);
+            
+            UnityEngine.Debug.Log($"Attempting to install {appName} to Applications folder...");
+            
+            // Check if we have write permissions to Applications folder
+            if (!Directory.Exists(applicationsPath))
+            {
+                UnityEngine.Debug.LogError("Applications folder not found");
+                return false;
+            }
+
+            // Remove existing installation if it exists
+            if (Directory.Exists(destinationPath))
+            {
+                UnityEngine.Debug.Log("Removing existing installation...");
+                ProcessStartInfo removeInfo = new ProcessStartInfo
+                {
+                    FileName = "rm",
+                    Arguments = $"-rf \"{destinationPath}\"",
+                    UseShellExecute = false,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                using (Process removeProcess = Process.Start(removeInfo))
+                {
+                    await Task.Run(() => removeProcess.WaitForExit());
+                    if (removeProcess.ExitCode != 0)
+                    {
+                        UnityEngine.Debug.LogWarning("Failed to remove existing installation, continuing anyway...");
+                    }
+                }
+            }
+
+            // Copy the app bundle to Applications
+            ProcessStartInfo copyInfo = new ProcessStartInfo
+            {
+                FileName = "cp",
+                Arguments = $"-R \"{appPath}\" \"{applicationsPath}\"",
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using (Process copyProcess = Process.Start(copyInfo))
+            {
+                await Task.Run(() => copyProcess.WaitForExit());
+                
+                if (copyProcess.ExitCode == 0)
+                {
+                    UnityEngine.Debug.Log($"Successfully installed {appName} to Applications folder!");
+                    
+                    // Launch the new version
+                    LaunchNewApplication(destinationPath);
+                    return true;
+                }
+                else
+                {
+                    string error = await copyProcess.StandardError.ReadToEndAsync();
+                    UnityEngine.Debug.LogError($"Failed to copy app to Applications: {error}");
+                    return false;
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogError($"Error during automatic installation: {e.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Opens the mounted volume in Finder for user interaction.
+    /// </summary>
+    private void OpenMountedVolume(string mountPoint)
+    {
+        try
+        {
+            ProcessStartInfo openInfo = new ProcessStartInfo
+            {
+                FileName = "open",
+                Arguments = $"\"{mountPoint}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            Process.Start(openInfo);
+            UnityEngine.Debug.Log($"Opened mounted volume: {mountPoint}");
+            UnityEngine.Debug.Log("Please drag the application to your Applications folder to complete the update.");
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogError($"Failed to open mounted volume: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Launches the newly installed application.
+    /// </summary>
+    private void LaunchNewApplication(string appPath)
+    {
+        try
+        {
+            ProcessStartInfo launchInfo = new ProcessStartInfo
+            {
+                FileName = "open",
+                Arguments = $"\"{appPath}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            Process.Start(launchInfo);
+            UnityEngine.Debug.Log($"Launched new application: {appPath}");
+            
+            // Schedule quit of current application
+            Application.Quit();
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogError($"Failed to launch new application: {e.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Unmounts the .dmg file.
+    /// </summary>
+    private void UnmountDmg(string mountPoint)
+    {
+        try
+        {
+            ProcessStartInfo unmountInfo = new ProcessStartInfo
+            {
+                FileName = "hdiutil",
+                Arguments = $"detach \"{mountPoint}\" -quiet",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            Process unmountProcess = Process.Start(unmountInfo);
+            unmountProcess.WaitForExit();
+            
+            if (unmountProcess.ExitCode == 0)
+            {
+                UnityEngine.Debug.Log($"Successfully unmounted: {mountPoint}");
+            }
+            else
+            {
+                UnityEngine.Debug.LogWarning($"Failed to unmount: {mountPoint}");
+            }
+        }
+        catch (Exception e)
+        {
+            UnityEngine.Debug.LogError($"Error unmounting .dmg: {e.Message}");
+        }
+    }
+    #endif
+
     /// <summary>
     /// Downloads a GitHub release asset.
     /// </summary>
@@ -476,11 +809,10 @@ public class UpdateChecker : MonoBehaviour
 
         string basePath = GetApplicationBasePath();
         string tempDir = FileUtility.GetTempDirectoryPath("update");
-        string zipPath = FileUtility.GetTempFilePath(GetPlatformAssetName());
+        // We'll set the actual download path after we know the asset type
 
         UnityEngine.Debug.Log($"Base path: {basePath}");
         UnityEngine.Debug.Log($"Temp directory: {tempDir}");
-        UnityEngine.Debug.Log($"Zip path: {zipPath}");
 
         try
         {
@@ -544,26 +876,20 @@ public class UpdateChecker : MonoBehaviour
 
                     UnityEngine.Debug.Log($"Found release: {latestRelease.tag_name}");
 
-                    string assetName = GetPlatformAssetName();
-                    GitHubAsset targetAsset = null;
-                    
-                    if (latestRelease.assets != null)
-                    {
-                        foreach (var asset in latestRelease.assets)
-                        {
-                            if (asset.name == assetName)
-                            {
-                                targetAsset = asset;
-                                break;
-                            }
-                        }
-                    }
+                    string foundAssetType;
+                    GitHubAsset targetAsset = FindPlatformAsset(latestRelease.assets, out foundAssetType);
 
                     if (targetAsset == null)
                     {
-                        UnityEngine.Debug.LogError($"Asset {assetName} not found in release {latestRelease.tag_name}");
+                        string[] possibleNames = GetPlatformAssetNames();
+                        string expectedNames = string.Join(", ", possibleNames);
+                        UnityEngine.Debug.LogError($"No matching asset found in release {latestRelease.tag_name}. Expected asset names: {expectedNames}");
                         return;
                     }
+
+                    // Set download path based on actual asset name
+                    string downloadPath = FileUtility.GetTempFilePath(targetAsset.name);
+                    UnityEngine.Debug.Log($"Download path: {downloadPath}");
 
                     UnityEngine.Debug.Log("Downloading update...");
                     byte[] assetData = await DownloadAssetData(targetAsset);
@@ -576,11 +902,11 @@ public class UpdateChecker : MonoBehaviour
 
                     try
                     {
-                        File.WriteAllBytes(zipPath, assetData);
-                        UnityEngine.Debug.Log($"Downloaded {assetData.Length / 1024 / 1024} MB to {zipPath}");
+                        File.WriteAllBytes(downloadPath, assetData);
+                        UnityEngine.Debug.Log($"Downloaded {assetData.Length / 1024 / 1024} MB to {downloadPath}");
                         
                         // Verify the file was written correctly
-                        if (!FileUtility.VerifyFileExists(zipPath, "download"))
+                        if (!FileUtility.VerifyFileExists(downloadPath, "download"))
                         {
                             FileUtility.CleanupTempFiles();
                             return;
@@ -593,17 +919,39 @@ public class UpdateChecker : MonoBehaviour
                         return;
                     }
 
-                    // Verify zip file exists and is accessible
-                    if (!FileUtility.VerifyFileExists(zipPath, "pre-extraction"))
+                    // Verify downloaded file exists and is accessible
+                    if (!FileUtility.VerifyFileExists(downloadPath, "pre-extraction"))
                     {
                         FileUtility.CleanupTempFiles();
                         return;
                     }
 
-                    UnityEngine.Debug.Log("Extracting update...");
-                    bool extractSuccess = await FileUtility.ExtractZip(zipPath, tempDir, (progress) => {
-                        UnityEngine.Debug.Log($"Extraction progress: {progress:P0}");
-                    });
+                    // Handle extraction based on file type
+                    bool extractSuccess = false;
+                    
+                    if (foundAssetType == "dmg")
+                    {
+                        #if UNITY_STANDALONE_OSX
+                            UnityEngine.Debug.Log("Processing .dmg update...");
+                            extractSuccess = await InstallDmgUpdate(downloadPath, tempDir);
+                        #else
+                            UnityEngine.Debug.LogError(".dmg files are only supported on macOS");
+                            extractSuccess = false;
+                        #endif
+                    }
+                    else if (foundAssetType == "zip")
+                    {
+                        UnityEngine.Debug.Log("Extracting .zip update...");
+                        extractSuccess = await FileUtility.ExtractZip(downloadPath, tempDir, (progress) => {
+                            UnityEngine.Debug.Log($"Extraction progress: {progress:P0}");
+                        });
+                    }
+                    else
+                    {
+                        UnityEngine.Debug.LogError($"Unsupported asset type: {foundAssetType}");
+                        extractSuccess = false;
+                    }
+                    
                     if (!extractSuccess)
                     {
                         UnityEngine.Debug.LogError("Extraction failed. Aborting update.");
@@ -627,7 +975,17 @@ public class UpdateChecker : MonoBehaviour
                         return;
                     }
 
-                    UnityEngine.Debug.Log($"Extracted {extractedFiles.Length} files successfully");
+                    if (foundAssetType == "dmg")
+                    {
+                        UnityEngine.Debug.Log("DMG processing completed. Installation may have been automatic or user interaction required.");
+                        // For .dmg files, installation is handled by InstallDmgUpdate method
+                        // We can safely return here as the .dmg installation process is complete
+                        return;
+                    }
+                    else
+                    {
+                        UnityEngine.Debug.Log($"Extracted {extractedFiles.Length} files successfully");
+                    }
 
                     string exePath = Process.GetCurrentProcess().MainModule.FileName;
                     if (!File.Exists(exePath))
@@ -653,12 +1011,12 @@ public class UpdateChecker : MonoBehaviour
                         $"if errorlevel 1 (\n" +
                         $"    echo Failed to copy files. Aborting update.\n" +
                         $"    rmdir /S /Q \"{tempDir}\"\n" +
-                        $"    del \"{zipPath}\"\n" +
+                        $"    del \"{downloadPath}\"\n" +
                         $"    exit /b 1\n" +
                         $")\n" +
                         $"echo Cleaning up...\n" +
                         $"rmdir /S /Q \"{tempDir}\"\n" +
-                        $"del \"{zipPath}\"\n" +
+                        $"del \"{downloadPath}\"\n" +
                         $"echo Starting application...\n" +
                         $"start \"\" \"{exePath}\"\n" +
                         $"echo Update complete!\n" +
