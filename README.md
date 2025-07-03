@@ -7,6 +7,7 @@ Build automation pipeline for desktop platforms in Unity with versioned GitHub r
 - Automated Unity build process for desktop platforms (Windows, macOS, Linux)
 - Automated versioning (Major.Minor.Build)
 - MacOS build signing
+- MacOS .dmg packaging (Using GitHub actions)
 - Windows installer creation
 - Build .zip bundler
 - Versioned GitHub Releases generation
