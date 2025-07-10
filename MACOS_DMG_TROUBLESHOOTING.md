@@ -1,168 +1,132 @@
-# macOS DMG Troubleshooting Guide
+# macOS DMG Code Signing Setup
 
-## Common DMG Issues and Solutions
+This document explains how to set up proper code signing for macOS DMG creation using the build pipeline.
 
-### "DMG file cannot be opened" or "No mountable filesystems"
+## Overview
 
-**Most Common Cause:** Missing or invalid code signing
+The build pipeline can create macOS DMG files with proper code signing instead of ad-hoc signing. This eliminates security warnings for end users.
 
-**Solutions:**
+## Required GitHub Secrets
 
-#### 1. For Development/Testing (Quick Fix)
-The workflow now includes ad-hoc signing which should resolve basic opening issues. If you're still having problems:
+To enable proper code signing in the DMG creation workflow, you need to set up the following GitHub repository secrets:
 
-**For end users:**
-- Right-click the app → "Open" (instead of double-clicking)
-- Go to System Preferences → Security & Privacy → "Open Anyway"
-- Or in Terminal: `sudo spctl --master-disable` (re-enable with `--master-enable`)
+### 1. P12_CERT (Recommended) or P12_CERTIFICATE
+- **Description**: Your Developer ID Application certificate exported as a base64-encoded P12 file
+- **Default Name**: The build pipeline defaults to `P12_CERT` but supports both naming conventions
+- **How to get it**:
+  1. Export your Developer ID Application certificate from Keychain Access as a `.p12` file
+  2. Convert to base64: `base64 -i certificate.p12 | pbcopy`
+  3. Paste the result into this GitHub secret
+- **Flexible Configuration**: You can configure which secret name to use in the build pipeline settings
 
-#### 2. For Distribution (Proper Fix)
+### 2. P12_PASSWORD (Optional)
+- **Description**: The password you used when exporting the P12 certificate
+- **When Required**: Only needed if your P12 certificate has a password
+- **Configuration**: Mark "Certificate has password" in the build pipeline if your certificate requires one
+- **Security**: Store this securely in GitHub Secrets
 
-##### Step 1: Get a Developer ID Certificate
-1. Join the Apple Developer Program ($99/year)
-2. Create a "Developer ID Application" certificate
-3. Download and install in Keychain Access
-4. Export as .p12 file
+### 3. APPLE_ID_PASSWORD (Optional - for notarization)
+- **Description**: App-specific password for your Apple ID
+- **How to get it**:
+  1. Go to https://appleid.apple.com
+  2. Sign in with your Apple ID
+  3. Generate an app-specific password for command-line tools
+  4. Store this password in GitHub Secrets
 
-##### Step 2: Configure Build Pipeline
-In the Unity Build Pipeline window:
+## How It Works
 
-1. **Enable macOS Signing**: ✓
-2. **P12 Certificate Path**: Path to your exported .p12 file
-3. **P12 Password**: Password for the .p12 file
-4. **Bundle Identifier**: Unique identifier (e.g., `com.yourcompany.yourapp`)
-5. **Enable Notarization**: ✓ (recommended)
-6. **Team ID**: Your Apple Developer Team ID
-7. **Apple ID**: Your Apple Developer account email
-8. **App Password**: App-specific password from appleid.apple.com
+1. **Build Pipeline Configuration**: Configure GitHub secrets usage and certificate settings in the Unity build pipeline window
+2. **Automatic Secret Detection**: The workflow automatically detects and uses the appropriate certificate secret (`P12_CERT` or `P12_CERTIFICATE`)
+3. **Timeout Protection**: All signing operations include timeout protection to prevent hanging (30-120 seconds)
+4. **Graceful Fallback**: If Developer ID signing fails, automatically falls back to ad-hoc signing
+5. **Proper Signing**: The GitHub Actions workflow uses your certificates to properly sign the macOS app
+6. **Notarization**: If configured, the app is also notarized by Apple after successful signing
+7. **Distribution Ready**: DMG files are created with proper permissions and distribution-friendly attributes
 
-##### Step 3: Entitlements
-Unity apps need specific entitlements. The build pipeline creates these automatically:
+## Configuration Steps
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>com.apple.security.cs.disable-library-validation</key>
-    <true/>
-    <key>com.apple.security.cs.disable-executable-page-protection</key>
-    <true/>
-    <key>com.apple.security.cs.allow-jit</key>
-    <true/>
-    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
-    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
-    <true/>
-</dict>
-</plist>
-```
+### 1. In Unity Build Pipeline Window
+- ✅ Enable "Sign macOS Build" 
+- 🔐 Enable "Use GitHub Secrets" (recommended for CI/CD)
+- 📝 Configure "P12 Secret Name" (defaults to "P12_CERT")
+- 🔑 Check "Certificate has password" if your P12 file requires a password
+- 📱 Set Bundle Identifier
+- 🍎 Enable Notarization (if desired)
+- 👤 Set Team ID and Apple ID (for notarization)
 
-### Other Common Issues
+**Local Development Alternative**:
+- 📝 Set P12 Certificate path (for local builds only)
+- 🔑 Set P12 Password (for local builds only)
 
-#### "App is damaged and can't be opened"
-- **Cause**: Corrupted download or quarantine attribute
-- **Solution**: In Terminal: `xattr -dr com.apple.quarantine /path/to/your/app.app`
+### 2. In GitHub Repository
+- 🔐 Add `P12_CERT` secret (base64-encoded P12 file) - or use `P12_CERTIFICATE` if preferred
+- 🔑 Add `P12_PASSWORD` secret (only if your certificate requires a password)
+- 🍎 Add `APPLE_ID_PASSWORD` secret (if using notarization)
 
-#### "App can't be opened because Apple cannot check it for malicious software"
-- **Cause**: App is not notarized
-- **Solution**: Enable notarization in build pipeline or use the right-click → Open method
+### 3. Build and Release
+- 🔧 Run the build pipeline with GitHub release enabled
+- 📦 The DMG will be created with proper signing automatically
 
-#### "App unexpectedly quit" or crashes on launch
-- **Cause**: Missing dependencies, wrong architecture, or permissions
-- **Solutions**:
-  1. Check Console.app for crash logs
-  2. Verify app architecture: `file /path/to/app.app/Contents/MacOS/appname`
-  3. Check for missing frameworks: `otool -L /path/to/app.app/Contents/MacOS/appname`
+## Troubleshooting
 
-#### DMG appears empty when mounted
-- **Cause**: Incorrect DMG creation or app bundle structure
-- **Solution**: The new validation step should catch this. Check workflow logs for details.
+### ❌ "timeout: command not found" 
+- **Fixed**: The workflow now automatically installs GNU coreutils
+- This error should no longer occur with the updated workflow
 
-## Manual Verification Steps
+### ❌ "Certificate import timed out or failed"
+- Check that your P12 file is valid and properly base64-encoded
+- Verify the P12 password is correct (if required)
+- Check that "Certificate has password" setting matches your certificate
+- The workflow includes 30-second timeout protection
 
-### 1. Check App Bundle Structure
-```bash
-# Should show proper app bundle structure
-ls -la YourApp.app/Contents/
-# Should contain: Info.plist, MacOS/, Resources/, etc.
-```
+### ❌ "No Developer ID Application identity found"
+- Check that your P12 file contains a Developer ID Application certificate
+- Verify the P12 password is correct
+- Ensure the certificate hasn't expired
+- Verify the secret name matches your configuration (`P12_CERT` vs `P12_CERTIFICATE`)
 
-### 2. Verify Code Signature
-```bash
-# Check if signed
-codesign -dv --verbose=4 YourApp.app
+### ❌ "Code signing failed or timed out"
+- The workflow includes 120-second timeout protection for signing operations
+- Check GitHub Actions logs for specific error details
+- Verify certificate is valid and not expired
+- The workflow will automatically fall back to ad-hoc signing
 
-# Verify signature
-codesign --verify --deep --strict --verbose=2 YourApp.app
-```
+### ❌ "Notarization failed"
+- Verify your Apple ID and app-specific password are correct
+- Check that your Team ID is correct
+- Ensure your Apple Developer account has notarization permissions
+- Notarization only runs after successful Developer ID signing
 
-### 3. Test App Launch
-```bash
-# Try launching from command line to see error messages
-open YourApp.app
-# Or directly:
-./YourApp.app/Contents/MacOS/YourApp
-```
+### ✅ "DMG creation falls back to ad-hoc signing"
+- **This is normal behavior** when Developer ID signing fails
+- Check GitHub Actions logs for why Developer ID signing failed
+- Ad-hoc signing still creates functional DMG files
+- Users will see standard macOS security warnings
 
-### 4. Check Quarantine
-```bash
-# Check if quarantined
-xattr YourApp.app
+### ⚠️ "App can't be opened because it is from an unidentified developer"
+- This happens with ad-hoc signing or unsigned apps
+- **User Solution**: Right-click → Open, or System Preferences → Security & Privacy → Allow
+- **Developer Solution**: Use proper Developer ID signing and notarization for production
 
-# Remove quarantine if needed
-xattr -dr com.apple.quarantine YourApp.app
-```
+## Testing
 
-## Understanding macOS Security Requirements
+1. **Local Testing**: First test signing locally in the build pipeline
+2. **GitHub Actions**: Check the workflow logs to see if signing succeeded
+3. **Download and Test**: Download the DMG and test on a clean macOS system
+4. **Permission Testing**: DMG files now have proper permissions set for distribution
+   - Files should open without permission errors
+   - Compatible across different macOS user accounts
+   - Reduced quarantine warnings on download
 
-### macOS Versions and Requirements
+## Security Notes
 
-| macOS Version | Requirement |
-|---------------|-------------|
-| 10.14 (Mojave) | Code signing recommended |
-| 10.15 (Catalina) | Code signing required, notarization for downloaded apps |
-| 11.0+ (Big Sur+) | Code signing + notarization required for all external apps |
+- 🔐 Never commit certificates or passwords to your repository
+- 🔑 Always use GitHub Secrets for sensitive information
+- 🔄 Rotate app-specific passwords periodically
+- 📅 Monitor certificate expiration dates
 
-### Code Signing Types
+## Additional Resources
 
-1. **Ad-hoc signing** (`--sign -`): Basic functionality, security warnings
-2. **Developer ID signing**: No warnings for identified developers
-3. **Developer ID + Notarization**: No warnings, fastest user experience
-
-## GitHub Actions Workflow Details
-
-The DMG creation workflow now includes:
-
-1. **Improved Permission Setting**: Sets executable permissions on all critical files
-2. **Ad-hoc Code Signing**: Provides basic signature for functionality
-3. **DMG Validation**: Tests if the created DMG can be mounted and contains a valid app
-4. **Detailed Logging**: Better error reporting and diagnostics
-
-## Quick Checklist for Users
-
-**When downloading a DMG that won't open:**
-
-- [ ] Try right-click → Open instead of double-clicking
-- [ ] Check System Preferences → Security & Privacy for blocked app notification
-- [ ] Try removing quarantine: `xattr -dr com.apple.quarantine Downloaded.dmg`
-- [ ] Verify download wasn't corrupted (check file size against expected)
-
-**For developers distributing DMGs:**
-
-- [ ] Join Apple Developer Program
-- [ ] Set up proper code signing in build pipeline
-- [ ] Enable notarization
-- [ ] Test on clean macOS system before release
-- [ ] Include installation instructions for users
-
-## Getting Help
-
-If you're still having issues:
-
-1. Check the GitHub Actions workflow logs for specific error messages
-2. Run the manual verification steps above
-3. Check macOS Console.app for crash reports or security messages
-4. Consider using the ZIP distribution as a fallback while resolving signing issues
-
-The ZIP file created alongside the DMG should work with manual extraction and the right-click → Open method. 
+- [Apple Developer Documentation](https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution)
+- [GitHub Secrets Documentation](https://docs.github.com/en/actions/security-guides/encrypted-secrets)
+- [Unity macOS Build Settings](https://docs.unity3d.com/Manual/class-PlayerSettingsStandalone.html) 
