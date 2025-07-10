@@ -46,6 +46,18 @@ UNITY_EMAIL      # Unity account email
 UNITY_PASSWORD   # Unity account password
 ```
 
+### macOS Code Signing Secrets (Optional)
+
+For professional macOS distribution with proper code signing:
+
+```
+P12_CERT         # Your Developer ID certificate as base64-encoded P12 file
+P12_PASSWORD     # Password for the P12 certificate (if required)
+APPLE_ID_PASSWORD # App-specific password for notarization (optional)
+```
+
+**Note**: The build pipeline supports flexible secret naming - you can use `P12_CERT` or `P12_CERTIFICATE` as the secret name.
+
 ### GitHub Workflows Setup
 
 DMG creation is now handled by GitHub Actions. The workflow files are automatically set up when you import the build pipeline.
@@ -117,15 +129,28 @@ The pipeline includes comprehensive GitHub Actions workflows:
 
 The macOS DMG creation process:
 
-1. **Primary Method**: Uses `create-dmg` for professional DMG files with:
-   - Custom volume name
-   - Drag-and-drop interface
-   - Application shortcut in Applications folder
+1. **Professional DMG Creation**: Uses `create-dmg` for polished DMG files with:
+   - Custom volume name and icon
+   - Drag-and-drop interface with Applications folder shortcut
    - Proper window sizing and positioning
+   - Professional appearance for distribution
 
-2. **Fallback Method**: Uses native `hdiutil` if `create-dmg` is unavailable
+2. **Code Signing Integration**: 
+   - Supports both GitHub secrets and local certificate signing
+   - Automatic fallback to ad-hoc signing if certificate issues occur
+   - Timeout protection prevents hanging on security commands
+   - Flexible secret naming (`P12_CERT` or `P12_CERTIFICATE`)
 
-3. **Backup**: Always creates a ZIP file as backup
+3. **Distribution Optimization**:
+   - Sets proper file permissions (`chmod 644`) for cross-user compatibility
+   - Removes quarantine attributes to reduce security warnings
+   - Creates readable files for all users
+   - Professional DMG formatting for end-user distribution
+
+4. **Fallback Methods**: 
+   - Uses native `hdiutil` if `create-dmg` is unavailable
+   - Always creates ZIP file as backup option
+   - Graceful error handling with informative messages
 
 ## Configuration
 
@@ -144,9 +169,22 @@ Assets/Settings/Build Profiles/
 
 For distribution outside the Mac App Store:
 
+#### Local Signing (Unity Editor)
 1. **Certificate**: Export Developer ID Application certificate as .p12
 2. **Entitlements**: Use custom or default hardened runtime entitlements
-3. **Notarization**: Requires Apple ID and app-specific password
+3. **Configuration**: Set certificate path and password in build pipeline window
+
+#### GitHub Actions Signing (Recommended)
+1. **GitHub Secrets**: Configure `P12_CERT` secret with base64-encoded certificate
+2. **Password Management**: Set `P12_PASSWORD` if your certificate requires a password
+3. **Automatic Fallback**: If signing fails, automatically falls back to ad-hoc signing
+4. **Timeout Protection**: All signing operations have timeout protection to prevent hanging
+
+#### Notarization (Optional)
+1. **Requirements**: Apple Developer account with notarization access
+2. **Secrets**: `APPLE_ID_PASSWORD` (app-specific password)
+3. **Configuration**: Set Apple ID and Team ID in build pipeline
+4. **Automatic**: Runs after successful Developer ID signing
 
 ### Windows Installer
 
@@ -176,6 +214,10 @@ GitHub_Build_Pipeline/
 
 ### DMG Creation Issues
 
+**⚠️ Important: If your DMG files fail to open on Mac, see the [macOS DMG Troubleshooting Guide](MACOS_DMG_TROUBLESHOOTING.md) for detailed solutions.**
+
+Common issues and quick fixes:
+
 **Problem**: DMG workflow fails to trigger
 **Solutions**:
 1. Verify GitHub repository URL and token are configured
@@ -200,7 +242,15 @@ GitHub_Build_Pipeline/
 **Problem**: macOS DMG creation fails in GitHub Actions
 **Solution**:
 - Check the workflow log for create-dmg installation
-- The workflow will fall back to ZIP if DMG creation fails
+- Verify GitHub secrets are properly configured (P12_CERT, P12_PASSWORD)
+- The workflow will automatically fall back to ad-hoc signing if certificate issues occur
+- DMG creation will fall back to ZIP if all methods fail
+
+**Problem**: Code signing hangs or times out
+**Solution**:
+- The workflow now includes automatic timeout protection (30-120 seconds)
+- Check GitHub Actions logs for specific timeout errors
+- Verify certificate format and password are correct
 
 ### General Build Issues
 

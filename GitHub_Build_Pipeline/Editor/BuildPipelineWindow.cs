@@ -48,6 +48,9 @@ public class BuildPipelineWindow : EditorWindow
     private string appleIdPassword = "";
     private bool useCustomEntitlements = false;
     private string entitlementsFilePath = "";
+    private bool useGitHubSecrets = true;
+    private string p12SecretName = "P12_CERT";
+    private bool hasP12Password = false;
     
     // Windows Installer Settings
     private string innoSetupPath = "";
@@ -126,6 +129,9 @@ public class BuildPipelineWindow : EditorWindow
         appleIdUsername = EditorPrefs.GetString("BuildPipeline_AppleIdUsername", "");
         useCustomEntitlements = EditorPrefs.GetBool("BuildPipeline_UseCustomEntitlements", false);
         entitlementsFilePath = EditorPrefs.GetString("BuildPipeline_EntitlementsFilePath", "");
+        useGitHubSecrets = EditorPrefs.GetBool("BuildPipeline_UseGitHubSecrets", true);
+        p12SecretName = EditorPrefs.GetString("BuildPipeline_P12SecretName", "P12_CERT");
+        hasP12Password = EditorPrefs.GetBool("BuildPipeline_HasP12Password", false);
         
         // Windows Installer
         innoSetupPath = EditorPrefs.GetString("BuildPipeline_InnoSetupPath", @"C:\Program Files (x86)\Inno Setup 6\ISCC.exe");
@@ -234,6 +240,9 @@ public class BuildPipelineWindow : EditorWindow
         EditorPrefs.SetString("BuildPipeline_AppleIdUsername", appleIdUsername);
         EditorPrefs.SetBool("BuildPipeline_UseCustomEntitlements", useCustomEntitlements);
         EditorPrefs.SetString("BuildPipeline_EntitlementsFilePath", entitlementsFilePath);
+        EditorPrefs.SetBool("BuildPipeline_UseGitHubSecrets", useGitHubSecrets);
+        EditorPrefs.SetString("BuildPipeline_P12SecretName", p12SecretName);
+        EditorPrefs.SetBool("BuildPipeline_HasP12Password", hasP12Password);
         
         // Windows Installer
         EditorPrefs.SetString("BuildPipeline_InnoSetupPath", innoSetupPath);
@@ -495,19 +504,36 @@ public class BuildPipelineWindow : EditorWindow
 
     private void DrawMacSigningSettings()
     {
-        EditorGUILayout.BeginHorizontal();
-        p12FilePath = EditorGUILayout.TextField(new GUIContent("P12 Certificate", "Path to your Developer ID Application certificate file (.p12) exported from Keychain Access"), p12FilePath);
-        if (GUILayout.Button("Browse", GUILayout.Width(60)))
-        {
-            string path = EditorUtility.OpenFilePanel("Select P12 Certificate", "", "p12");
-            if (!string.IsNullOrEmpty(path)) p12FilePath = path;
-        }
-        EditorGUILayout.EndHorizontal();
+        // GitHub Secrets vs Local Certificate
+        useGitHubSecrets = EditorGUILayout.Toggle(new GUIContent("Use GitHub Secrets", "Use P12 certificate stored in GitHub repository secrets instead of local file"), useGitHubSecrets);
         
-        if (showPasswords)
-            p12Password = EditorGUILayout.TextField(new GUIContent("P12 Password", "Password used when exporting the certificate from Keychain Access"), p12Password);
+        if (useGitHubSecrets)
+        {
+            EditorGUI.indentLevel++;
+            p12SecretName = EditorGUILayout.TextField(new GUIContent("P12 Secret Name", "Name of the GitHub secret containing the base64-encoded P12 certificate"), p12SecretName);
+            hasP12Password = EditorGUILayout.Toggle(new GUIContent("Certificate Has Password", "Whether the P12 certificate requires a password (password should be stored as P12_PASSWORD secret)"), hasP12Password);
+            
+            EditorGUILayout.HelpBox("The P12 certificate should be base64-encoded and stored as a GitHub secret. If it has a password, store it as 'P12_PASSWORD' secret.", MessageType.Info);
+            EditorGUI.indentLevel--;
+        }
         else
-            p12Password = EditorGUILayout.PasswordField(new GUIContent("P12 Password", "Password used when exporting the certificate from Keychain Access"), p12Password);
+        {
+            EditorGUI.indentLevel++;
+            EditorGUILayout.BeginHorizontal();
+            p12FilePath = EditorGUILayout.TextField(new GUIContent("P12 Certificate", "Path to your Developer ID Application certificate file (.p12) exported from Keychain Access"), p12FilePath);
+            if (GUILayout.Button("Browse", GUILayout.Width(60)))
+            {
+                string path = EditorUtility.OpenFilePanel("Select P12 Certificate", "", "p12");
+                if (!string.IsNullOrEmpty(path)) p12FilePath = path;
+            }
+            EditorGUILayout.EndHorizontal();
+            
+            if (showPasswords)
+                p12Password = EditorGUILayout.TextField(new GUIContent("P12 Password", "Password used when exporting the certificate from Keychain Access"), p12Password);
+            else
+                p12Password = EditorGUILayout.PasswordField(new GUIContent("P12 Password", "Password used when exporting the certificate from Keychain Access"), p12Password);
+            EditorGUI.indentLevel--;
+        }
             
         macBundleIdentifier = EditorGUILayout.TextField(new GUIContent("Bundle Identifier", "Unique identifier for your macOS application (e.g., com.company.appname)"), macBundleIdentifier);
         
@@ -551,7 +577,14 @@ public class BuildPipelineWindow : EditorWindow
                 appleIdPassword = EditorGUILayout.PasswordField(new GUIContent("App Password", "App-specific password generated for command-line tools"), appleIdPassword);
             EditorGUI.indentLevel--;
             
-            EditorGUILayout.HelpBox("For notarization, you need an app-specific password. Generate one at appleid.apple.com.", MessageType.Info);
+            if (useGitHubSecrets)
+            {
+                EditorGUILayout.HelpBox("For notarization with GitHub secrets, store your app-specific password as 'APPLE_ID_PASSWORD' secret. Generate one at appleid.apple.com.", MessageType.Info);
+            }
+            else
+            {
+                EditorGUILayout.HelpBox("For notarization, you need an app-specific password. Generate one at appleid.apple.com.", MessageType.Info);
+            }
         }
     }
 
@@ -929,14 +962,25 @@ public class BuildPipelineWindow : EditorWindow
         // Validate macOS signing settings
         if (enableMacSigning && buildMacOS)
         {
-            if (string.IsNullOrEmpty(p12FilePath) || !File.Exists(p12FilePath))
+            if (useGitHubSecrets)
             {
-                return "macOS signing is enabled but P12 certificate file is not found.";
+                if (string.IsNullOrEmpty(p12SecretName))
+                {
+                    return "macOS signing is enabled with GitHub secrets but P12 secret name is not provided.";
+                }
             }
-            if (string.IsNullOrEmpty(p12Password))
+            else
             {
-                return "macOS signing is enabled but P12 password is not provided.";
+                if (string.IsNullOrEmpty(p12FilePath) || !File.Exists(p12FilePath))
+                {
+                    return "macOS signing is enabled but P12 certificate file is not found.";
+                }
+                if (string.IsNullOrEmpty(p12Password))
+                {
+                    return "macOS signing is enabled but P12 password is not provided.";
+                }
             }
+            
             if (enableNotarization)
             {
                 if (string.IsNullOrEmpty(providerShortName))
@@ -947,9 +991,9 @@ public class BuildPipelineWindow : EditorWindow
                 {
                     return "Notarization is enabled but Apple ID is not provided.";
                 }
-                if (string.IsNullOrEmpty(appleIdPassword))
+                if (!useGitHubSecrets && string.IsNullOrEmpty(appleIdPassword))
                 {
-                    return "Notarization is enabled but App-Specific Password is not provided.";
+                    return "Notarization is enabled but App-Specific Password is not provided. (When using GitHub secrets, store as APPLE_ID_PASSWORD secret)";
                 }
             }
         }
@@ -1351,6 +1395,19 @@ public class BuildPipelineWindow : EditorWindow
         catch (Exception ex)
         {
             throw new Exception($"Failed to extract signing identity: {ex.Message}");
+        }
+    }
+
+    private async Task<string> ExtractSigningIdentityForWorkflow(string p12Path, string password)
+    {
+        try
+        {
+            // Use the existing method to extract the signing identity
+            return await ExtractSigningIdentity(p12Path, password);
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Failed to extract signing identity for workflow: {ex.Message}");
         }
     }
 
@@ -1830,12 +1887,90 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
             // Extract release ID from upload URL
             string releaseId = releaseData.upload_url.Split('/')[^3];
             
+            // Prepare signing parameters if macOS signing is enabled
+            GitHubAPI.WorkflowSigningParams signingParams = null;
+            UnityEngine.Debug.Log($"DMG Signing Check: enableMacSigning={enableMacSigning}, useGitHubSecrets={useGitHubSecrets}");
+            
+            if (enableMacSigning)
+            {
+                statusMessage = "Preparing signing parameters for DMG creation...";
+                UnityEngine.Debug.Log("macOS signing is enabled, preparing signing data...");
+                
+                try
+                {
+                    signingParams = new GitHubAPI.WorkflowSigningParams
+                    {
+                        useProperSigning = true,
+                        bundleIdentifier = macBundleIdentifier
+                    };
+                    
+                    if (useGitHubSecrets)
+                    {
+                        // Use GitHub secrets for signing
+                        signingParams.useGitHubSecrets = true;
+                        signingParams.p12SecretName = p12SecretName;
+                        signingParams.hasP12Password = hasP12Password;
+                        UnityEngine.Debug.Log($"Using GitHub secrets: {p12SecretName}, hasPassword={hasP12Password}");
+                    }
+                    else if (!string.IsNullOrEmpty(p12FilePath) && !string.IsNullOrEmpty(p12Password))
+                    {
+                        // Extract signing identity from local P12 file
+                        UnityEngine.Debug.Log($"Extracting signing identity from local P12: {p12FilePath}");
+                        signingParams.signingIdentity = await ExtractSigningIdentityForWorkflow(p12FilePath, p12Password);
+                        UnityEngine.Debug.Log($"Extracted signing identity: {signingParams.signingIdentity}");
+                    }
+                    else
+                    {
+                        throw new Exception("Local P12 file selected but file path or password is missing");
+                    }
+                    
+                    // Add notarization parameters if enabled
+                    if (enableNotarization)
+                    {
+                        signingParams.enableNotarization = true;
+                        signingParams.teamId = providerShortName;
+                        signingParams.appleId = appleIdUsername;
+                        UnityEngine.Debug.Log($"🍎 Notarization enabled: TeamID={signingParams.teamId}, AppleID={signingParams.appleId}");
+                        
+                        if (useGitHubSecrets)
+                        {
+                            UnityEngine.Debug.Log("🔐 Apple ID password should be stored as APPLE_ID_PASSWORD secret");
+                        }
+                    }
+                    
+                    // Add entitlements if custom ones are specified
+                    if (useCustomEntitlements && !string.IsNullOrEmpty(entitlementsFilePath) && File.Exists(entitlementsFilePath))
+                    {
+                        byte[] entitlementsBytes = File.ReadAllBytes(entitlementsFilePath);
+                        signingParams.entitlementsContent = Convert.ToBase64String(entitlementsBytes);
+                        UnityEngine.Debug.Log($"📋 Custom entitlements loaded: {entitlementsBytes.Length} bytes");
+                    }
+                    
+                    UnityEngine.Debug.Log($"✅ Prepared signing parameters successfully:");
+                    UnityEngine.Debug.Log($"  - Use GitHub Secrets: {signingParams.useGitHubSecrets}");
+                    UnityEngine.Debug.Log($"  - Bundle: {signingParams.bundleIdentifier}");
+                    UnityEngine.Debug.Log($"  - Notarization: {signingParams.enableNotarization}");
+                    UnityEngine.Debug.Log($"  - Has Entitlements: {!string.IsNullOrEmpty(signingParams.entitlementsContent)}");
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogError($"❌ Failed to prepare signing parameters: {ex.Message}");
+                    UnityEngine.Debug.LogWarning("Will use ad-hoc signing in DMG creation.");
+                    signingParams = null;
+                }
+            }
+            else
+            {
+                UnityEngine.Debug.Log("macOS signing not enabled. DMG will use ad-hoc signing.");
+            }
+            
             // Trigger the DMG creation workflow
-            bool success = await api.TriggerWorkflow("create-dmg.yml", "main", downloadUrl, Application.productName, version, releaseId);
+            bool success = await api.TriggerWorkflow("create-dmg.yml", "main", downloadUrl, Application.productName, version, releaseId, signingParams);
             
             if (success)
             {
-                statusMessage = "DMG creation workflow triggered successfully! The DMG will be attached to the release automatically.";
+                string signingMessage = signingParams?.useProperSigning == true ? " with proper code signing" : " with ad-hoc signing";
+                statusMessage = "DMG creation workflow triggered successfully" + signingMessage + "! The DMG will be attached to the release automatically.";
                 UnityEngine.Debug.Log("DMG creation workflow started. Check GitHub Actions for progress, and the DMG will be attached to the release when complete.");
             }
             else
@@ -1895,12 +2030,86 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
             string releaseId = release.id.ToString();
             string downloadUrl = $"{repositoryUrl}/releases/download/v{version}/{Application.productName}-MacOS.zip";
 
+            // Prepare signing parameters if macOS signing is enabled
+            GitHubAPI.WorkflowSigningParams signingParams = null;
+            UnityEngine.Debug.Log($"Manual DMG Signing Check: enableMacSigning={enableMacSigning}, useGitHubSecrets={useGitHubSecrets}");
+            
+            if (enableMacSigning)
+            {
+                UnityEngine.Debug.Log("Manual DMG: macOS signing is enabled and has required parameters");
+                
+                try
+                {
+                    signingParams = new GitHubAPI.WorkflowSigningParams
+                    {
+                        useProperSigning = true,
+                        bundleIdentifier = macBundleIdentifier
+                    };
+                    
+                    if (useGitHubSecrets)
+                    {
+                        // Use GitHub secrets for signing
+                        signingParams.useGitHubSecrets = true;
+                        signingParams.p12SecretName = p12SecretName;
+                        signingParams.hasP12Password = hasP12Password;
+                        UnityEngine.Debug.Log($"Manual DMG using GitHub secrets: {p12SecretName}, hasPassword={hasP12Password}");
+                    }
+                    else if (!string.IsNullOrEmpty(p12FilePath) && !string.IsNullOrEmpty(p12Password))
+                    {
+                        // Extract signing identity from local P12 file
+                        UnityEngine.Debug.Log($"Manual DMG: Extracting signing identity from P12: {p12FilePath}");
+                        signingParams.signingIdentity = await ExtractSigningIdentityForWorkflow(p12FilePath, p12Password);
+                        UnityEngine.Debug.Log($"Manual DMG: Extracted signing identity: {signingParams.signingIdentity}");
+                    }
+                    else
+                    {
+                        throw new Exception("Local P12 file selected but file path or password is missing");
+                    }
+                    
+                    // Add notarization parameters if enabled
+                    if (enableNotarization)
+                    {
+                        signingParams.enableNotarization = true;
+                        signingParams.teamId = providerShortName;
+                        signingParams.appleId = appleIdUsername;
+                        UnityEngine.Debug.Log($"Manual DMG: Notarization enabled: TeamID={signingParams.teamId}, AppleID={signingParams.appleId}");
+                        
+                        if (useGitHubSecrets)
+                        {
+                            UnityEngine.Debug.Log("Manual DMG: Apple ID password should be stored as APPLE_ID_PASSWORD secret");
+                        }
+                    }
+                    
+                    // Add entitlements if custom ones are specified
+                    if (useCustomEntitlements && !string.IsNullOrEmpty(entitlementsFilePath) && File.Exists(entitlementsFilePath))
+                    {
+                        byte[] entitlementsBytes = File.ReadAllBytes(entitlementsFilePath);
+                        signingParams.entitlementsContent = Convert.ToBase64String(entitlementsBytes);
+                        UnityEngine.Debug.Log($"📋 Manual DMG: Custom entitlements loaded: {entitlementsBytes.Length} bytes");
+                    }
+                    
+                    string signingType = useGitHubSecrets ? "GitHub secrets" : "local certificate";
+                    UnityEngine.Debug.Log($"Manual DMG creation will use proper code signing via {signingType}");
+                }
+                catch (Exception ex)
+                {
+                    UnityEngine.Debug.LogError($"Failed to prepare signing parameters for manual DMG: {ex.Message}");
+                    UnityEngine.Debug.LogWarning("Will use ad-hoc signing.");
+                    signingParams = null;
+                }
+            }
+            else
+            {
+                UnityEngine.Debug.Log("Manual DMG creation will use ad-hoc signing (macOS signing not enabled)");
+            }
+
             // Trigger the DMG creation workflow
-            bool success = await api.TriggerWorkflow("create-dmg.yml", "main", downloadUrl, Application.productName, version, releaseId);
+            bool success = await api.TriggerWorkflow("create-dmg.yml", "main", downloadUrl, Application.productName, version, releaseId, signingParams);
 
             if (success)
             {
-                statusMessage = "DMG creation workflow triggered successfully! The DMG will be attached to the release automatically.";
+                string signingMessage = signingParams?.useProperSigning == true ? " with proper code signing" : " with ad-hoc signing";
+                statusMessage = "DMG creation workflow triggered successfully" + signingMessage + "! The DMG will be attached to the release automatically.";
                 UnityEngine.Debug.Log("DMG creation workflow started. Check GitHub Actions for progress, and the DMG will be attached to the release when complete.");
             }
             else

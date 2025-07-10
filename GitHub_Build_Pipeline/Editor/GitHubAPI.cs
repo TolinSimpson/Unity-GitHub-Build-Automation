@@ -87,10 +87,22 @@ public class GitHubAPI
         {
             ".zip" => "application/zip",
             ".dmg" => "application/x-apple-diskimage",
-            ".exe" => "application/vnd.microsoft.portable-executable",
+            ".exe" => "application/vnd-microsoft.portable-executable",
             ".iss" => "text/plain",
             _ => "application/octet-stream"
         };
+    }
+
+    private string EscapeJsonString(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return input;
+        
+        return input
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("\n", "\\n")
+            .Replace("\r", "\\r")
+            .Replace("\t", "\\t");
     }
 
     /// <summary>
@@ -102,25 +114,112 @@ public class GitHubAPI
     /// <param name="appName">Application name</param>
     /// <param name="version">Version string</param>
     /// <param name="releaseId">GitHub release ID</param>
+    /// <param name="signingParams">Optional code signing parameters</param>
     /// <returns>True if workflow was triggered successfully</returns>
-    public async Task<bool> TriggerWorkflow(string workflowFileName, string gitRef, string downloadUrl, string appName, string version, string releaseId)
+    public async Task<bool> TriggerWorkflow(string workflowFileName, string gitRef, string downloadUrl, string appName, string version, string releaseId, WorkflowSigningParams signingParams = null)
     {
         string url = $"{GITHUB_API_BASE}/repos/{owner}/{repo}/actions/workflows/{workflowFileName}/dispatches";
         
-        var requestData = new WorkflowDispatchData
+        // Build inputs dictionary (now limited to 5 parameters to stay well under GitHub's 10-input limit)
+        var inputsDict = new System.Collections.Generic.Dictionary<string, string>
         {
-            @ref = gitRef,
-            inputs = new WorkflowInputs
-            {
-                download_url = downloadUrl,
-                app_name = appName,
-                version = version,
-                release_id = releaseId
-            }
+            {"download_url", downloadUrl},
+            {"app_name", appName},
+            {"version", version},
+            {"release_id", releaseId}
         };
+
+        // Add signing parameters as a single JSON string if provided
+        if (signingParams?.useProperSigning == true)
+        {
+            var signingJson = new StringBuilder();
+            signingJson.Append("{");
+            
+            // Always include use_proper_signing
+            signingJson.Append("\"use_proper_signing\":true");
+            
+            // Add other parameters if they have values
+            if (!string.IsNullOrEmpty(signingParams.signingIdentity))
+            {
+                signingJson.Append(",\"signing_identity\":\"");
+                signingJson.Append(EscapeJsonString(signingParams.signingIdentity));
+                signingJson.Append("\"");
+            }
+            
+            if (!string.IsNullOrEmpty(signingParams.bundleIdentifier))
+            {
+                signingJson.Append(",\"bundle_identifier\":\"");
+                signingJson.Append(EscapeJsonString(signingParams.bundleIdentifier));
+                signingJson.Append("\"");
+            }
+            
+            if (signingParams.enableNotarization == true)
+            {
+                signingJson.Append(",\"enable_notarization\":true");
+                
+                if (!string.IsNullOrEmpty(signingParams.teamId))
+                {
+                    signingJson.Append(",\"team_id\":\"");
+                    signingJson.Append(EscapeJsonString(signingParams.teamId));
+                    signingJson.Append("\"");
+                }
+                
+                if (!string.IsNullOrEmpty(signingParams.appleId))
+                {
+                    signingJson.Append(",\"apple_id\":\"");
+                    signingJson.Append(EscapeJsonString(signingParams.appleId));
+                    signingJson.Append("\"");
+                }
+            }
+            
+            if (!string.IsNullOrEmpty(signingParams.entitlementsContent))
+            {
+                signingJson.Append(",\"entitlements_content\":\"");
+                signingJson.Append(EscapeJsonString(signingParams.entitlementsContent));
+                signingJson.Append("\"");
+            }
+            
+            if (signingParams.useGitHubSecrets == true)
+            {
+                signingJson.Append(",\"use_github_secrets\":true");
+                
+                if (!string.IsNullOrEmpty(signingParams.p12SecretName))
+                {
+                    signingJson.Append(",\"p12_secret_name\":\"");
+                    signingJson.Append(EscapeJsonString(signingParams.p12SecretName));
+                    signingJson.Append("\"");
+                }
+                
+                if (signingParams.hasP12Password.HasValue)
+                {
+                    signingJson.Append($",\"has_p12_password\":{(signingParams.hasP12Password.Value ? "true" : "false")}");
+                }
+            }
+            
+            signingJson.Append("}");
+            
+            inputsDict["signing_params"] = signingJson.ToString();
+            UnityEngine.Debug.Log($"Created signing parameters JSON ({signingJson.Length} chars): {signingJson}");
+        }
+        else
+        {
+            UnityEngine.Debug.Log("No signing parameters provided - DMG will use ad-hoc signing");
+        }
         
-        string json = JsonUtility.ToJson(requestData);
-        UnityEngine.Debug.Log($"Triggering workflow with JSON: {json}");
+        // Build JSON manually to ensure proper formatting
+        var inputsJson = new StringBuilder();
+        inputsJson.Append("{");
+        bool first = true;
+        foreach (var kvp in inputsDict)
+        {
+            if (!first) inputsJson.Append(",");
+            inputsJson.Append($"\"{kvp.Key}\":\"{EscapeJsonString(kvp.Value)}\"");
+            first = false;
+        }
+        inputsJson.Append("}");
+        
+        string json = $"{{\"ref\":\"{gitRef}\",\"inputs\":{inputsJson}}}";
+        UnityEngine.Debug.Log($"Triggering workflow with {inputsDict.Count} parameters: {json}");
 
         using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
         {
@@ -189,21 +288,7 @@ public class GitHubAPI
     }
 
 
-    [Serializable]
-    private class WorkflowDispatchData
-    {
-        [SerializeField] public string @ref;
-        [SerializeField] public WorkflowInputs inputs;
-    }
 
-    [Serializable]
-    private class WorkflowInputs
-    {
-        public string download_url;
-        public string app_name;
-        public string version;
-        public string release_id;
-    }
 
     [Serializable]
     public class GitHubRelease
@@ -215,5 +300,22 @@ public class GitHubAPI
         public bool prerelease;
         public string upload_url;
         public string html_url;
+    }
+
+    /// <summary>
+    /// Parameters for code signing during DMG creation
+    /// </summary>
+    public class WorkflowSigningParams
+    {
+        public bool? useProperSigning;
+        public string signingIdentity;
+        public string bundleIdentifier;
+        public bool? enableNotarization;
+        public string teamId;
+        public string appleId;
+        public string entitlementsContent; // Base64 encoded entitlements file content
+        public bool? useGitHubSecrets; // Whether to use GitHub secrets for P12 certificate
+        public string p12SecretName; // Name of the GitHub secret containing the P12 certificate
+        public bool? hasP12Password; // Whether the P12 certificate has a password
     }
 } 
