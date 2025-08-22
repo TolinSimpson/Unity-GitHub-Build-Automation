@@ -487,6 +487,18 @@ public class FileUtility
     /// <returns>True if successful, false otherwise</returns>
     public static bool CreateZipFile(string sourcePath, string zipPath)
     {
+        return CreateZipFile(sourcePath, zipPath, null);
+    }
+
+    /// <summary>
+    /// Creates a zip file from a directory with optional exclusion patterns.
+    /// </summary>
+    /// <param name="sourcePath">Path to the directory to zip</param>
+    /// <param name="zipPath">Path where the zip file will be created</param>
+    /// <param name="excludePatterns">Array of patterns to exclude from the zip (e.g., "*_BurstDebugInformation_DoNotShip")</param>
+    /// <returns>True if successful, false otherwise</returns>
+    public static bool CreateZipFile(string sourcePath, string zipPath, string[] excludePatterns)
+    {
         try
         {
             if (!Directory.Exists(sourcePath))
@@ -508,8 +520,21 @@ public class FileUtility
                 File.Delete(zipPath);
             }
 
-            ZipFile.CreateFromDirectory(sourcePath, zipPath);
-            UnityEngine.Debug.Log($"Created zip file: {zipPath}");
+            // If no exclusion patterns, use the simple method
+            if (excludePatterns == null || excludePatterns.Length == 0)
+            {
+                ZipFile.CreateFromDirectory(sourcePath, zipPath);
+                UnityEngine.Debug.Log($"Created zip file: {zipPath}");
+                return true;
+            }
+
+            // Create zip with exclusions
+            using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+            {
+                AddDirectoryToZip(archive, sourcePath, "", excludePatterns);
+            }
+
+            UnityEngine.Debug.Log($"Created filtered zip file: {zipPath} (excluded: {string.Join(", ", excludePatterns)})");
             return true;
         }
         catch (System.Exception e)
@@ -517,6 +542,81 @@ public class FileUtility
             UnityEngine.Debug.LogError($"Failed to create zip file: {e.Message}");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Recursively adds files and directories to a zip archive, excluding specified patterns.
+    /// </summary>
+    private static void AddDirectoryToZip(ZipArchive archive, string sourcePath, string entryPath, string[] excludePatterns)
+    {
+        string[] files = Directory.GetFiles(sourcePath);
+        string[] directories = Directory.GetDirectories(sourcePath);
+
+        // Add files
+        foreach (string file in files)
+        {
+            string fileName = Path.GetFileName(file);
+            string relativePath = string.IsNullOrEmpty(entryPath) ? fileName : Path.Combine(entryPath, fileName);
+            
+            // Check if file should be excluded
+            if (!ShouldExclude(file, fileName, excludePatterns))
+            {
+                archive.CreateEntryFromFile(file, relativePath);
+            }
+            else
+            {
+                UnityEngine.Debug.Log($"Excluded file from zip: {relativePath}");
+            }
+        }
+
+        // Add directories
+        foreach (string directory in directories)
+        {
+            string dirName = Path.GetFileName(directory);
+            string relativePath = string.IsNullOrEmpty(entryPath) ? dirName : Path.Combine(entryPath, dirName);
+            
+            // Check if directory should be excluded
+            if (!ShouldExclude(directory, dirName, excludePatterns))
+            {
+                AddDirectoryToZip(archive, directory, relativePath, excludePatterns);
+            }
+            else
+            {
+                UnityEngine.Debug.Log($"Excluded directory from zip: {relativePath}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Checks if a file or directory should be excluded based on patterns.
+    /// </summary>
+    private static bool ShouldExclude(string fullPath, string name, string[] excludePatterns)
+    {
+        if (excludePatterns == null || excludePatterns.Length == 0)
+            return false;
+
+        foreach (string pattern in excludePatterns)
+        {
+            // Simple wildcard matching
+            if (pattern.Contains("*"))
+            {
+                string regexPattern = "^" + System.Text.RegularExpressions.Regex.Escape(pattern).Replace("\\*", ".*") + "$";
+                if (System.Text.RegularExpressions.Regex.IsMatch(name, regexPattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                {
+                    return true;
+                }
+            }
+            else
+            {
+                // Exact match
+                if (string.Equals(name, pattern, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

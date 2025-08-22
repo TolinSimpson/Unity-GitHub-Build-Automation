@@ -1462,17 +1462,34 @@ public class BuildPipelineWindow : EditorWindow
         if (buildMacOS) platformsToBuild.Add("MacOS");
         if (buildLinux) platformsToBuild.Add("Linux");
 
+        // Define exclusion patterns for Unity debug information
+        string[] excludePatterns = new string[]
+        {
+            "*_BurstDebugInformation_DoNotShip"
+        };
+
         foreach (string platform in platformsToBuild)
         {
             string buildFolderName = $"{Application.productName}-{platform}";
             string buildPath = Path.Combine(BUILD_PATH, buildFolderName);
             if (!Directory.Exists(buildPath)) continue;
 
+            // Check if the build path contains Burst debug information
+            string[] burstDebugDirs = Directory.GetDirectories(buildPath, "*_BurstDebugInformation_DoNotShip", SearchOption.TopDirectoryOnly);
+            if (burstDebugDirs.Length > 0)
+            {
+                UnityEngine.Debug.Log($"Found {burstDebugDirs.Length} Burst debug information folder(s) in {platform} build - these will be excluded from the ZIP");
+                foreach (string dir in burstDebugDirs)
+                {
+                    UnityEngine.Debug.Log($"  - Excluding: {Path.GetFileName(dir)}");
+                }
+            }
+
             // Create ZIP files for all platforms (DMG creation now handled by GitHub Actions)
             string zipPath = Path.Combine(releasePath, $"{buildFolderName}.zip");
-            if (FileUtility.CreateZipFile(buildPath, zipPath))
+            if (FileUtility.CreateZipFile(buildPath, zipPath, excludePatterns))
             {
-                UnityEngine.Debug.Log($"Created release ZIP for {platform}");
+                UnityEngine.Debug.Log($"Created release ZIP for {platform} (excluded debug info)");
             }
         }
         
