@@ -1918,7 +1918,10 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
                     signingParams = new GitHubAPI.WorkflowSigningParams
                     {
                         useProperSigning = true,
-                        bundleIdentifier = macBundleIdentifier
+                        bundleIdentifier = macBundleIdentifier,
+                        teamId = providerShortName,
+                        appleId = appleIdUsername,
+                        enableNotarization = enableNotarization
                     };
                     
                     if (useGitHubSecrets)
@@ -1941,12 +1944,9 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
                         throw new Exception("Local P12 file selected but file path or password is missing");
                     }
                     
-                    // Add notarization parameters if enabled
+                    // Log notarization configuration if enabled
                     if (enableNotarization)
                     {
-                        signingParams.enableNotarization = true;
-                        signingParams.teamId = providerShortName;
-                        signingParams.appleId = appleIdUsername;
                         UnityEngine.Debug.Log($"🍎 Notarization enabled: TeamID={signingParams.teamId}, AppleID={signingParams.appleId}");
                         
                         if (useGitHubSecrets)
@@ -2060,7 +2060,10 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
                     signingParams = new GitHubAPI.WorkflowSigningParams
                     {
                         useProperSigning = true,
-                        bundleIdentifier = macBundleIdentifier
+                        bundleIdentifier = macBundleIdentifier,
+                        teamId = providerShortName,
+                        appleId = appleIdUsername,
+                        enableNotarization = enableNotarization
                     };
                     
                     if (useGitHubSecrets)
@@ -2083,12 +2086,9 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
                         throw new Exception("Local P12 file selected but file path or password is missing");
                     }
                     
-                    // Add notarization parameters if enabled
+                    // Log notarization configuration if enabled
                     if (enableNotarization)
                     {
-                        signingParams.enableNotarization = true;
-                        signingParams.teamId = providerShortName;
-                        signingParams.appleId = appleIdUsername;
                         UnityEngine.Debug.Log($"Manual DMG: Notarization enabled: TeamID={signingParams.teamId}, AppleID={signingParams.appleId}");
                         
                         if (useGitHubSecrets)

@@ -32,7 +32,7 @@ public class WorkflowAutoSetup
 
 ### 3. Files Included
 - `unity-build.yml` - Main Unity build workflow
-- `create-dmg.yml` - DMG creation workflow
+- `create-dmg.yml` - DMG creation workflow with comprehensive debug logging
 
 ## For Package Authors
 
@@ -83,4 +83,5 @@ When importing the build pipeline:
 - Only extracts if workflows don't exist
 - Overwrites files if they exist but are outdated
 - Logs all operations to Unity Console
-- Graceful error handling 
+- Graceful error handling
+- Workflows include comprehensive debug logging for troubleshooting 

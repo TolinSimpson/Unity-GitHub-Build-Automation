@@ -138,7 +138,58 @@ public class GitHubAPI
             // Always include use_proper_signing
             signingJson.Append("\"use_proper_signing\":true");
             
-            // Add other parameters if they have values
+            // Add bundle_identifier (required field)
+            if (!string.IsNullOrEmpty(signingParams.bundleIdentifier))
+            {
+                signingJson.Append(",\"bundleIdentifier\":\"");
+                signingJson.Append(EscapeJsonString(signingParams.bundleIdentifier));
+                signingJson.Append("\"");
+            }
+            
+            // Add teamId and appleId (always include if provided)
+            if (!string.IsNullOrEmpty(signingParams.teamId))
+            {
+                signingJson.Append(",\"teamId\":\"");
+                signingJson.Append(EscapeJsonString(signingParams.teamId));
+                signingJson.Append("\"");
+            }
+            
+            if (!string.IsNullOrEmpty(signingParams.appleId))
+            {
+                signingJson.Append(",\"appleId\":\"");
+                signingJson.Append(EscapeJsonString(signingParams.appleId));
+                signingJson.Append("\"");
+            }
+            
+            // Add enable_notarization (always include as boolean)
+            if (signingParams.enableNotarization.HasValue)
+            {
+                signingJson.Append($",\"enableNotarization\":{(signingParams.enableNotarization.Value ? "true" : "false")}");
+            }
+            
+            // Add use_github_secrets (always include as boolean)
+            if (signingParams.useGitHubSecrets.HasValue)
+            {
+                signingJson.Append($",\"use_github_secrets\":{(signingParams.useGitHubSecrets.Value ? "true" : "false")}");
+                
+                // Add GitHub secrets-specific fields if using secrets
+                if (signingParams.useGitHubSecrets.Value)
+                {
+                    if (!string.IsNullOrEmpty(signingParams.p12SecretName))
+                    {
+                        signingJson.Append(",\"p12_secret_name\":\"");
+                        signingJson.Append(EscapeJsonString(signingParams.p12SecretName));
+                        signingJson.Append("\"");
+                    }
+                    
+                    if (signingParams.hasP12Password.HasValue)
+                    {
+                        signingJson.Append($",\"has_p12_password\":{(signingParams.hasP12Password.Value ? "true" : "false")}");
+                    }
+                }
+            }
+            
+            // Add signing_identity (for local certificate signing)
             if (!string.IsNullOrEmpty(signingParams.signingIdentity))
             {
                 signingJson.Append(",\"signing_identity\":\"");
@@ -146,54 +197,12 @@ public class GitHubAPI
                 signingJson.Append("\"");
             }
             
-            if (!string.IsNullOrEmpty(signingParams.bundleIdentifier))
-            {
-                signingJson.Append(",\"bundle_identifier\":\"");
-                signingJson.Append(EscapeJsonString(signingParams.bundleIdentifier));
-                signingJson.Append("\"");
-            }
-            
-            if (signingParams.enableNotarization == true)
-            {
-                signingJson.Append(",\"enable_notarization\":true");
-                
-                if (!string.IsNullOrEmpty(signingParams.teamId))
-                {
-                    signingJson.Append(",\"team_id\":\"");
-                    signingJson.Append(EscapeJsonString(signingParams.teamId));
-                    signingJson.Append("\"");
-                }
-                
-                if (!string.IsNullOrEmpty(signingParams.appleId))
-                {
-                    signingJson.Append(",\"apple_id\":\"");
-                    signingJson.Append(EscapeJsonString(signingParams.appleId));
-                    signingJson.Append("\"");
-                }
-            }
-            
+            // Add entitlements_content (base64 encoded custom entitlements)
             if (!string.IsNullOrEmpty(signingParams.entitlementsContent))
             {
                 signingJson.Append(",\"entitlements_content\":\"");
                 signingJson.Append(EscapeJsonString(signingParams.entitlementsContent));
                 signingJson.Append("\"");
-            }
-            
-            if (signingParams.useGitHubSecrets == true)
-            {
-                signingJson.Append(",\"use_github_secrets\":true");
-                
-                if (!string.IsNullOrEmpty(signingParams.p12SecretName))
-                {
-                    signingJson.Append(",\"p12_secret_name\":\"");
-                    signingJson.Append(EscapeJsonString(signingParams.p12SecretName));
-                    signingJson.Append("\"");
-                }
-                
-                if (signingParams.hasP12Password.HasValue)
-                {
-                    signingJson.Append($",\"has_p12_password\":{(signingParams.hasP12Password.Value ? "true" : "false")}");
-                }
             }
             
             signingJson.Append("}");
