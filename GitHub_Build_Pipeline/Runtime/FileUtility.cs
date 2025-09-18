@@ -556,7 +556,8 @@ public class FileUtility
         foreach (string file in files)
         {
             string fileName = Path.GetFileName(file);
-            string relativePath = string.IsNullOrEmpty(entryPath) ? fileName : Path.Combine(entryPath, fileName);
+            // Use forward slashes for cross-platform compatibility in ZIP files
+            string relativePath = string.IsNullOrEmpty(entryPath) ? fileName : entryPath + "/" + fileName;
             
             // Check if file should be excluded
             if (!ShouldExclude(file, fileName, excludePatterns))
@@ -573,7 +574,8 @@ public class FileUtility
         foreach (string directory in directories)
         {
             string dirName = Path.GetFileName(directory);
-            string relativePath = string.IsNullOrEmpty(entryPath) ? dirName : Path.Combine(entryPath, dirName);
+            // Use forward slashes for cross-platform compatibility in ZIP files
+            string relativePath = string.IsNullOrEmpty(entryPath) ? dirName : entryPath + "/" + dirName;
             
             // Check if directory should be excluded
             if (!ShouldExclude(directory, dirName, excludePatterns))
