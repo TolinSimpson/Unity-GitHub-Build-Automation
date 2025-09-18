@@ -1,6 +1,6 @@
 # GitHub Build Pipeline
 
-A comprehensive Unity build pipeline that supports multi-platform builds, code signing, packaging, and GitHub releases.
+A comprehensive Unity build pipeline that supports multi-platform desktop builds, code signing, packaging. Exports executables to GitHub releases.
 
 ## Features
 
