@@ -14,9 +14,41 @@ public class GitHubAPI
 
     public GitHubAPI(string token, string owner, string repo)
     {
-        this.token = token;
+        this.token = token?.Trim();
         this.owner = owner;
         this.repo = repo;
+        
+        // Validate token format
+        if (string.IsNullOrEmpty(this.token))
+        {
+            UnityEngine.Debug.LogError("GitHub token is null or empty!");
+        }
+        else if (this.token.Length < 20)
+        {
+            UnityEngine.Debug.LogError($"GitHub token seems too short ({this.token.Length} characters). Fine-grained tokens should be much longer.");
+        }
+        else
+        {
+            UnityEngine.Debug.Log($"GitHub token loaded: {this.token.Length} characters, starts with: {this.token.Substring(0, Math.Min(7, this.token.Length))}...");
+        }
+    }
+
+    /// <summary>
+    /// Sets the appropriate authorization header based on token type
+    /// </summary>
+    private void SetAuthorizationHeader(UnityWebRequest request)
+    {
+        // Fine-grained tokens often work better with the 'token' format
+        if (token.StartsWith("github_pat_"))
+        {
+            request.SetRequestHeader("Authorization", $"token {token}");
+            UnityEngine.Debug.Log("Using 'token' format for fine-grained PAT");
+        }
+        else
+        {
+            SetAuthorizationHeader(request);
+            UnityEngine.Debug.Log("Using 'Bearer' format for classic token");
+        }
     }
 
     public async Task<string> CreateRelease(string tagName, string title, string body, bool prerelease)
@@ -36,7 +68,7 @@ public class GitHubAPI
             request.uploadHandler = new UploadHandlerRaw(bodyRaw);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
-            request.SetRequestHeader("Authorization", $"token {token}");
+            SetAuthorizationHeader(request);
             request.SetRequestHeader("User-Agent", "Unity-Editor");
 
             var operation = request.SendWebRequest();
@@ -66,7 +98,7 @@ public class GitHubAPI
             request.uploadHandler = new UploadHandlerRaw(fileData);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", contentType);
-            request.SetRequestHeader("Authorization", $"token {token}");
+            SetAuthorizationHeader(request);
             request.SetRequestHeader("User-Agent", "Unity-Editor");
 
             var operation = request.SendWebRequest();
@@ -236,7 +268,7 @@ public class GitHubAPI
             request.uploadHandler = new UploadHandlerRaw(bodyRaw);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
-            request.SetRequestHeader("Authorization", $"token {token}");
+            SetAuthorizationHeader(request);
             request.SetRequestHeader("User-Agent", "Unity-Editor");
 
             var operation = request.SendWebRequest();
@@ -257,6 +289,39 @@ public class GitHubAPI
     }
 
     /// <summary>
+    /// Tests if the token is valid by making a simple API call
+    /// </summary>
+    /// <returns>True if token is valid</returns>
+    public async Task<bool> ValidateToken()
+    {
+        string url = $"{GITHUB_API_BASE}/repos/{owner}/{repo}";
+        UnityEngine.Debug.Log($"Testing token with repository info URL: {url}");
+
+        using (UnityWebRequest request = UnityWebRequest.Get(url))
+        {
+            SetAuthorizationHeader(request);
+            request.SetRequestHeader("User-Agent", "Unity-Editor");
+
+            var operation = request.SendWebRequest();
+            while (!operation.isDone)
+                await Task.Yield();
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                UnityEngine.Debug.Log("✅ Token validation successful - can access repository");
+                return true;
+            }
+            else
+            {
+                UnityEngine.Debug.LogError($"❌ Token validation failed: {request.error}");
+                UnityEngine.Debug.LogError($"Response code: {request.responseCode}");
+                UnityEngine.Debug.LogError($"Response: {request.downloadHandler.text}");
+                return false;
+            }
+        }
+    }
+
+    /// <summary>
     /// Gets a release by tag name
     /// </summary>
     /// <param name="tagName">The release tag</param>
@@ -264,10 +329,12 @@ public class GitHubAPI
     public async Task<GitHubRelease> GetReleaseByTag(string tagName)
     {
         string url = $"{GITHUB_API_BASE}/repos/{owner}/{repo}/releases/tags/{tagName}";
+        UnityEngine.Debug.Log($"Attempting to get release from URL: {url}");
+        UnityEngine.Debug.Log($"Using owner: {owner}, repo: {repo}, tag: {tagName}");
 
         using (UnityWebRequest request = UnityWebRequest.Get(url))
         {
-            request.SetRequestHeader("Authorization", $"token {token}");
+            SetAuthorizationHeader(request);
             request.SetRequestHeader("User-Agent", "Unity-Editor");
 
             var operation = request.SendWebRequest();
@@ -277,11 +344,15 @@ public class GitHubAPI
             if (request.result == UnityWebRequest.Result.Success)
             {
                 string response = request.downloadHandler.text;
+                UnityEngine.Debug.Log("Successfully retrieved release data");
                 return JsonUtility.FromJson<GitHubRelease>(response);
             }
             else
             {
                 UnityEngine.Debug.LogError($"Failed to get release: {request.error}");
+                UnityEngine.Debug.LogError($"Response code: {request.responseCode}");
+                UnityEngine.Debug.LogError($"Response text: {request.downloadHandler.text}");
+                UnityEngine.Debug.LogError($"Full URL: {url}");
                 return null;
             }
         }
