@@ -2034,6 +2034,15 @@ Filename: ""{{app}}\\{exeName}""; Description: ""{{cm:LaunchProgram,{appName}}}"
 
             var api = new GitHubAPI(githubToken, owner, repo);
 
+            // Validate token first
+            statusMessage = "Validating GitHub token...";
+            bool isTokenValid = await api.ValidateToken();
+            if (!isTokenValid)
+            {
+                statusMessage = "GitHub token validation failed. Please check your token and repository access.";
+                return;
+            }
+
             // Use current version or check for existing release
             string version = PlayerSettings.bundleVersion;
             var release = await api.GetReleaseByTag($"v{version}");
